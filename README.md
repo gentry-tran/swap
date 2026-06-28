@@ -63,16 +63,21 @@ Choose an account to swap to:
   2) personal        you@example.com                  [saved]
 Account # (or name): 2
 
-Which browser for sign-in?
-  1) Safari   2) Chrome   3) Brave Browser   4) Firefox   5) Arc
-  6) keep current (Safari)
-Browser # [6]:
+Which browser for sign-in? (detected on this Mac)
+  1) Safari
+  2) Google Chrome
+  3) Brave Browser
+  Enter = keep current (Safari)
+Browser #:
 Switched to 'personal' (you@example.com). Restart 'claude' to pick up the account.
 ```
 
-It lists every account, lets you pick one, asks which browser to use for sign-in
-(only needed if a browser login is required), then switches. If the account has a
-cached credential the switch is instant; otherwise it runs the browser login.
+It lists every account, lets you pick one, then asks which browser to use for
+sign-in — **only the browsers actually installed on this Mac**, detected at
+runtime with `open -Ra`, so the menu never offers a browser you don't have. If
+the account already has a cached credential the switch is instant and
+browser-independent; the browser only matters when a fresh browser login is
+needed.
 
 Then **restart `claude`** to pick up the new account.
 

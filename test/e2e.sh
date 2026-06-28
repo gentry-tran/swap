@@ -45,8 +45,8 @@ check "active is work after use" "$(cat "$SWAP_VAULT/.active")" "work"
 check "keychain slot == work's cached blob" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/work.keychain")"
 check "which reports work email" "$("$SWAP" which)" "work@example.com (work)"
 
-echo "== interactive swap (pick personal by name, keep browser) =="
-printf 'personal\n6\n' | "$SWAP" >/dev/null
+echo "== interactive swap (pick personal by name, Enter=keep browser) =="
+printf 'personal\n\n' | "$SWAP" >/dev/null
 check "active is personal after interactive swap" "$(cat "$SWAP_VAULT/.active")" "personal"
 check "keychain slot == personal's cached blob" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/personal.keychain")"
 

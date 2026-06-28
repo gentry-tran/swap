@@ -218,6 +218,17 @@ print(json.dumps(d, indent=2))
   save_config "$config"
 }
 
+# List browsers actually installed on this Mac, in preference order.
+# `open -Ra <name>` succeeds (without launching) only if the app is registered.
+detect_browsers() {
+  local candidates=("Safari" "Google Chrome" "Brave Browser" "Firefox" "Arc" \
+                    "Microsoft Edge" "Dia" "Vivaldi" "Opera" "Chromium")
+  local b
+  for b in "${candidates[@]}"; do
+    if open -Ra "$b" >/dev/null 2>&1; then printf '%s\n' "$b"; fi
+  done
+}
+
 # Interactive: pick an account, choose a browser, then switch to it.
 cmd_swap() {
   local -a names=()
@@ -256,21 +267,26 @@ cmd_swap() {
   # Choose which browser handles the OAuth URL (used only if a login is needed).
   local current_browser browser
   current_browser=$(get_account_field "$name" "browser")
+  local -a browsers=()
+  while IFS= read -r b; do browsers+=("$b"); done < <(detect_browsers)
   echo ""
-  echo "Which browser for sign-in?"
-  echo "  1) Safari   2) Chrome   3) Brave Browser   4) Firefox   5) Arc"
-  echo "  6) keep current (${current_browser:-default})"
-  local bpick
-  read -r -p "Browser # [6]: " bpick
-  case "${bpick:-6}" in
-    1) browser="Safari";;
-    2) browser="Chrome";;
-    3) browser="Brave Browser";;
-    4) browser="Firefox";;
-    5) browser="Arc";;
-    6|"") browser="$current_browser";;
-    *) browser="$bpick";;  # treat free text as an app name
-  esac
+  if [ ${#browsers[@]} -gt 0 ]; then
+    echo "Which browser for sign-in? (detected on this Mac)"
+    local j
+    for j in "${!browsers[@]}"; do printf "  %d) %s\n" "$((j+1))" "${browsers[$j]}"; done
+    echo "  Enter = keep current (${current_browser:-default})"
+    local bpick
+    read -r -p "Browser #: " bpick
+    if [ -z "$bpick" ]; then
+      browser="$current_browser"
+    elif [[ "$bpick" =~ ^[0-9]+$ ]] && [ "$bpick" -ge 1 ] && [ "$bpick" -le ${#browsers[@]} ]; then
+      browser="${browsers[$((bpick-1))]}"
+    else
+      browser="$bpick"   # free text: treat as an app name
+    fi
+  else
+    browser="$current_browser"   # detection failed; keep what's set
+  fi
   [ -n "$browser" ] && set_account_browser "$name" "$browser"
 
   # Switch: restore cached credentials instantly, or run a browser login if none.

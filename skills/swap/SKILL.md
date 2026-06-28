@@ -75,7 +75,13 @@ swap use work       # restart `claude` to pick it up
   saved blob with `security add-generic-password -U`. A stale item left behind
   can shadow the intended account, so the purge is essential.
 - `--browser` routes the OAuth URL to a specific app by setting `BROWSER` to a
-  tiny opener script, so each account logs in under the right browser profile.
+  tiny opener script (`open -a "<app>"`), so each account logs in under the right
+  browser profile. The value is stored per-account in `accounts.json` and used
+  only on the login path; restoring a cached credential is browser-independent.
+- The interactive picker does not assume a fixed browser list — it probes which
+  browsers are installed with `open -Ra "<app>"` (which resolves an app via
+  LaunchServices without launching it) and offers only those, so it can never
+  pick a browser the machine doesn't have.
 
 Vault location: `~/.config/swap` (override with `SWAP_VAULT`).
 
