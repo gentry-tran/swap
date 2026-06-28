@@ -43,7 +43,7 @@ echo "== use work (instant restore, no browser) =="
 "$SWAP" use work >/dev/null
 check "active is work after use" "$(cat "$SWAP_VAULT/.active")" "work"
 check "keychain slot == work's cached blob" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/work.keychain")"
-check "which reports work" "$("$SWAP" which)" "work (work@example.com)"
+check "which reports work email" "$("$SWAP" which)" "work@example.com (work)"
 
 echo "== interactive swap (pick personal by name, keep browser) =="
 printf 'personal\n6\n' | "$SWAP" >/dev/null

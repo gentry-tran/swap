@@ -287,8 +287,11 @@ cmd_which() {
   [ -f "$ACTIVE_FILE" ] && active=$(cat "$ACTIVE_FILE")
   local email
   email=$(get_account_field "$active" "email")
-  if [ -n "$email" ]; then
-    echo "$active ($email)"
+  if [ -z "$active" ] || [ "$active" = "none" ]; then
+    echo "none"
+  elif [ -n "$email" ]; then
+    # Lead with the email; only show the short name when it differs.
+    if [ "$active" = "$email" ]; then echo "$email"; else echo "$email ($active)"; fi
   else
     echo "$active (unknown)"
   fi
