@@ -25,7 +25,16 @@ git clone https://github.com/gentry-tran/swap.git ~/tools/swap
 Make sure `~/.local/bin` is on your `PATH`. Requirements: macOS, `bash`,
 `python3`, and Claude Code (`claude`) already installed.
 
+## Quick start
+
+No accounts yet? Just run `swap` — with an empty vault it runs Claude's own
+sign-in (`claude auth login`), then saves whatever account you logged into,
+named by its email. Repeat for each subscription. After that, `swap` switches
+between them instantly.
+
 ## Set up (one time per account)
+
+You can also register accounts explicitly:
 
 1. **Register** each subscription you use, with the browser its login should open in:
 
@@ -69,21 +78,25 @@ Which browser for sign-in? (detected on this Mac)
   3) Firefox
   Enter = keep current (Safari)
 Browser #:
-Switched to 'personal' (you@example.com). Restart 'claude' — it'll be signed in automatically (no /login).
+✓ Auth still valid (you@example.com) — no browser sign-in needed. Restart 'claude'.
 ```
 
 It lists every account, lets you pick one, and switches. If that account already
 has cached credentials (the normal case), the switch is an **instant local
 restore** — `claude` starts up already signed into that account with **no
-browser and no in-app `/login`**. You only get sent to the browser the *first*
-time an account is used (or if its cache was cleared); after that one-time seed,
-every future swap is instant.
+browser and no in-app `/login`**.
+
+After restoring, swap checks the session with `claude auth status`. If it's
+still valid (or just needs a routine token refresh, which Claude does on launch),
+swap says so and **does not** open a browser. It opens the chosen browser to
+re-authenticate **only when the cached session is genuinely expired** — or the
+first time an account is used.
 
 The browser prompt offers **the browsers your Mac actually registers**, with no
 hardcoded app list: the set is derived at runtime by asking LaunchServices which
 top-level applications claim the `http`/`https` URL schemes (the same set macOS
 offers as a default browser), with nested helper browsers and cached copies
-filtered out. That choice only matters on the one-time browser sign-in.
+filtered out. That choice only matters when a browser sign-in is actually needed.
 
 Then **restart `claude`** — it picks up the swapped account automatically.
 
@@ -91,13 +104,14 @@ Then **restart `claude`** — it picks up the swapped account automatically.
 
 | Command | What it does |
 |---------|--------------|
-| `swap` | Interactive picker: choose account → instant restore (browser sign-in only to seed a new account) |
+| `swap` | Interactive picker. Empty vault → native `claude auth login` + auto-register. Otherwise: pick account → instant restore, re-auth in browser only if expired |
 | `swap add <name> --email <e> [--browser <app>]` | Register an account |
 | `swap login <name>` | Browser OAuth, then cache the credential |
 | `swap use <name>` | Switch to a cached account (no prompts) |
 | `swap save <name>` | Snapshot the current live credential into the vault |
 | `swap list` | List configured accounts |
 | `swap which` | Show the active account |
+| `swap browsers` | List the browsers detected on this Mac |
 | `swap remove <name>` | Forget an account |
 
 `--browser` accepts: `Safari`, `Chrome`, `Brave Browser`, `Firefox`, `Arc`, or

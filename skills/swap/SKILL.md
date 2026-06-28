@@ -48,14 +48,25 @@ requires another full browser OAuth flow.
 restores it on demand — turning a browser re-login into an instant local swap.
 
 ```
+swap                   interactive: pick account + browser, then switch
 swap add <name> --email <email> [--browser <app>]   register an account
 swap login <name>      one-time browser OAuth, then cache the credential
-swap use <name>        restore that account's credential (instant)
+swap use <name>        restore that account's credential (instant, no prompts)
 swap save <name>       re-cache the current live credential
 swap which             show the active account
 swap list              list configured accounts
+swap browsers          list browsers detected on this Mac
 swap remove <name>     forget an account
 ```
+
+Bare `swap` is the main entry point:
+- **Empty vault** → runs Claude's own `claude auth login`, reads the signed-in
+  email from `claude auth status --json`, and registers that account
+  automatically (named by its email). No need to type the email first.
+- **Has accounts** → pick one, then it restores the cached credential and checks
+  `claude auth status`. If the session is still valid (or just needs a routine
+  refresh, which Claude does on launch) it switches with **no browser**. It only
+  opens the chosen browser to re-authenticate when the session is truly expired.
 
 Typical setup:
 
@@ -74,6 +85,10 @@ swap use work       # restart `claude` to pick it up
 - **use / restore** purge every `Claude Code-credentials` item, then re-add the
   saved blob with `security add-generic-password -U`. A stale item left behind
   can shadow the intended account, so the purge is essential.
+- **validity check** (interactive `swap` only): after restoring, it runs
+  `claude auth status --json`. Logged-in → done, no browser. Not logged-in but
+  the cached blob has a `refreshToken` → Claude refreshes on launch, still no
+  browser. Otherwise (expired, no refresh) → it opens the browser to re-auth.
 - `--browser` routes the OAuth URL to a specific app by setting `BROWSER` to a
   tiny opener script (`open -a "<app>"`), so each account logs in under the right
   browser profile. The value is stored per-account in `accounts.json` and used

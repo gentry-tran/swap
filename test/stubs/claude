@@ -1,16 +1,35 @@
 #!/usr/bin/env bash
-# Test stub for the `claude` CLI. Only models `claude auth login --email <e>`,
-# which "signs in" by writing a fake credential into the stub keychain slot.
+# Test stub for the `claude` CLI. Models the two subcommands swap uses:
+#   claude auth login [--email <e>]  -> "sign in" by writing a fake credential
+#                                       into the stub keychain slot ($FAKE_KC).
+#                                       Email-less login simulates the user
+#                                       choosing an account on Claude's page.
+#   claude auth status --json        -> report logged-in + email, UNLESS the
+#                                       stored credential is the EXPIRED marker.
+: "${FAKE_KC:?FAKE_KC must be set}"
+
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
   email=""
+  shift 2
   while [ $# -gt 0 ]; do
     [ "$1" = "--email" ] && email="${2:-}"
     shift
   done
-  : "${FAKE_KC:?FAKE_KC must be set}"
+  [ -z "$email" ] && email="bootstrap@example.com"   # user-entered email on the page
   printf '{"claudeAiOauth":{"accessToken":"fake-%s","refreshToken":"r","expiresAt":0}}' "$email" > "$FAKE_KC"
   printf '%s' "$email" > "$FAKE_KC.acct"
   echo "(stub) logged in as $email"
+  exit 0
+fi
+
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
+  slot="$(cat "$FAKE_KC" 2>/dev/null || true)"
+  acct="$(cat "$FAKE_KC.acct" 2>/dev/null || true)"
+  if [ -z "$slot" ] || printf '%s' "$slot" | grep -q EXPIRED; then
+    printf '{"loggedIn":false}\n'
+  else
+    printf '{"loggedIn":true,"email":"%s"}\n' "$acct"
+  fi
   exit 0
 fi
 exit 0

@@ -109,29 +109,45 @@ run - remove ghost
 t_rc "remove nonexistent rc0 (idempotent)" 0
 
 echo "## swap (interactive)"
+# --- empty vault bootstraps via claude auth login (no hand-entered account) ---
 fresh
-run - swap   # no accounts
-t_rc "swap empty rc1" 1;      t_has "swap empty msg" "No accounts yet"
-# two accounts, both with cached creds
+run '\n' swap                     # Enter = default browser, then native sign-in
+t_rc "swap bootstrap rc0" 0
+t_has "swap bootstrap signs in" "Signed in and saved"
+t_eq "swap bootstrap registered account" "$(acct_field bootstrap@example.com email)" "bootstrap@example.com"
+t_eq "swap bootstrap active" "$(cat "$SWAP_VAULT/.active")" "bootstrap@example.com"
+t_file "swap bootstrap cached cred" "$SWAP_VAULT/bootstrap@example.com.keychain"
+
+# --- two cached accounts: restore-first, validity-checked, no needless browser ---
+fresh
 run - add work     --email w@example.com --browser Safari   >/dev/null
 run - add personal --email p@example.com --browser Safari   >/dev/null
 run - login work >/dev/null
 run - login personal >/dev/null
-# pick by name, keep browser (Enter)
-run 'work\n\n' swap
+run 'work\n\n' swap               # pick by name, keep browser (Enter)
 t_rc "swap by name rc0" 0
 t_eq "swap by name active" "$(cat "$SWAP_VAULT/.active")" "work"
 t_eq "swap by name slot restored" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/work.keychain")"
+t_has "swap valid auth -> no browser" "Auth still valid"
 t_eq "swap keep-browser unchanged" "$(acct_field work browser)" "Safari"
-# pick by number (sorted: personal=1, work=2) + choose browser #2 (Google Chrome from stub)
-run 'personal\n2\n' swap
+run 'personal\n2\n' swap          # pick #1=personal, browser #2 = Google Chrome
 t_eq "swap by number active" "$(cat "$SWAP_VAULT/.active")" "personal"
 t_eq "swap browser pick #2 -> Google Chrome" "$(acct_field personal browser)" "Google Chrome"
 t_has "swap menu lists detected browsers" "detected on this Mac"
-# invalid account selection
-run 'nope\n' swap
+run 'nope\n' swap                 # invalid account selection
 t_rc "swap invalid pick rc1" 1; t_has "swap invalid msg" "No such account"
-# account with no cached cred -> falls through to login
+
+# --- cached but EXPIRED session (no refresh token) -> browser re-auth ---
+fresh
+run - add exp --email exp@example.com --browser Safari >/dev/null
+printf '%s' '{"claudeAiOauth":{"accessToken":"EXPIRED-TOKEN","expiresAt":0}}' > "$SWAP_VAULT/exp.keychain"
+run 'exp\n\n' swap
+t_rc "swap expired rc0" 0
+t_has "swap expired announces re-auth" "is expired"
+t_filehas "swap expired re-logged in" "$SWAP_VAULT/exp.keychain" "fake-exp@example.com"
+t_eq "swap expired active" "$(cat "$SWAP_VAULT/.active")" "exp"
+
+# --- no cache at all -> browser sign-in ---
 fresh
 run - add fresh1 --email f@example.com --browser Safari >/dev/null
 run 'fresh1\n\n' swap
@@ -139,15 +155,15 @@ t_rc "swap needs-login rc0" 0
 t_has "swap needs-login runs login" "to sign in"
 t_file "swap needs-login cached cred" "$SWAP_VAULT/fresh1.keychain"
 
-echo "## browser detection (LaunchServices-derived, filtered)"
-DETECTED="$(cd "$REPO" && bash -c 'source <(sed -n "/^detect_browsers()/,/^}\$/p" swap); detect_browsers')"
-t_eq "detect: Safari present"          "$(grep -c '^Safari$' <<<"$DETECTED")" "1"
-t_eq "detect: Google Chrome present"   "$(grep -c '^Google Chrome$' <<<"$DETECTED")" "1"
-t_eq "detect: Firefox present"         "$(grep -c '^Firefox$' <<<"$DETECTED")" "1"
-t_eq "detect: nested helper filtered"  "$(grep -c '^Chromium$' <<<"$DETECTED")" "0"
-t_eq "detect: cached copy filtered"    "$(grep -c '^Camoufox$' <<<"$DETECTED")" "0"
-t_eq "detect: non-browser filtered"    "$(grep -c '^Mail$' <<<"$DETECTED")" "0"
-t_eq "detect: exactly 3 real browsers" "$(grep -c . <<<"$DETECTED")" "3"
-t_eq "detect: sorted deterministically" "$(printf '%s' "$DETECTED" | tr '\n' '|')" "Firefox|Google Chrome|Safari"
+echo "## browser detection (LaunchServices-derived, filtered) via 'swap browsers'"
+run - browsers
+t_rc "browsers rc0" 0
+t_eq "browsers: deterministic sorted set" "$(printf '%s' "$OUT" | tr '\n' '|')" "Firefox|Google Chrome|Safari"
+t_has "browsers: Safari present"        "Safari"
+t_has "browsers: Google Chrome present" "Google Chrome"
+t_has "browsers: Firefox present"       "Firefox"
+t_hasnot "browsers: nested helper filtered" "Chromium"
+t_hasnot "browsers: cached copy filtered"   "Camoufox"
+t_hasnot "browsers: non-browser filtered"   "Mail"
 
 summary
