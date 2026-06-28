@@ -66,7 +66,7 @@ Account # (or name): 2
 Which browser for sign-in? (detected on this Mac)
   1) Safari
   2) Google Chrome
-  3) Brave Browser
+  3) Firefox
   Enter = keep current (Safari)
 Browser #:
 Switched to 'personal' (you@example.com). Restart 'claude' to pick up the account.

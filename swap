@@ -68,7 +68,10 @@ for name, info in sorted(accounts.items()):
     marker = ' <-' if name == active else ''
     browser = info.get('browser', 'default')
     has_creds = 'OK' if os.path.exists(f'{vault}/{name}.keychain') else '--'
-    print(f'  [{has_creds}] {name:15s} {info[\"email\"]:35s} browser={browser}{marker}')
+    email = info.get('email', '')
+    # When the account name IS the email, show it once; otherwise 'name (email)'.
+    ident = email if name == email else f'{name} ({email})'
+    print(f'  [{has_creds}] {ident:38s} browser={browser}{marker}')
 " 2>/dev/null
 }
 
@@ -250,7 +253,10 @@ cmd_swap() {
     email=$(get_account_field "$n" "email")
     [ -s "$VAULT/${n}.keychain" ] && has="saved" || has="needs login"
     [ "$n" = "$active" ] && marker=" (active)" || marker=""
-    printf "  %d) %-15s %-32s [%s]%s\n" "$((i+1))" "$n" "$email" "$has" "$marker"
+    # Show the email once when the account name IS the email.
+    local ident
+    [ "$n" = "$email" ] && ident="$email" || ident="$n ($email)"
+    printf "  %d) %-38s [%s]%s\n" "$((i+1))" "$ident" "$has" "$marker"
   done
 
   local pick name
