@@ -22,6 +22,13 @@ git clone https://github.com/gentry-tran/swap.git ~/tools/swap
 ~/tools/swap/install.sh        # symlinks `swap` into ~/.local/bin
 ```
 
+`swap` is a single self-contained script, so you can also grab just that:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gentry-tran/swap/main/swap \
+  -o ~/.local/bin/swap && chmod +x ~/.local/bin/swap
+```
+
 Make sure `~/.local/bin` is on your `PATH`. Requirements: macOS, `bash`,
 `python3`, and Claude Code (`claude`) already installed.
 
