@@ -1,0 +1,6 @@
+# Never commit vault contents (live OAuth tokens)
+*.keychain
+*.email
+accounts.json
+.active
+.DS_Store

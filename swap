@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# swap — Config-driven Claude Code account switcher
+#
+# Claude Code stores one OAuth credential at a time in the macOS login
+# Keychain under the service name "Claude Code-credentials". That makes the
+# CLI single-account: signing into a second subscription overwrites the first,
+# forcing a full browser re-login every time you switch.
+#
+# swap backs up each account's Keychain credential to a local vault and
+# restores it on demand, so switching between subscriptions is instant and
+# never requires re-authenticating through the browser.
+#
+# Vault layout (~/.config/swap by default):
+#   accounts.json        registry: { name -> { email, browser } }
+#   <name>.keychain      saved credential blob for that account
+#   <name>.email         the account's email (restore key)
+#   .active              name of the currently restored account
+#
+# SCOPE: manages ONLY the default Claude Code profile (Keychain service
+# "Claude Code-credentials"). Concurrent profiles launched with a custom
+# CLAUDE_CONFIG_DIR use a per-config Keychain service
+# ("Claude Code-credentials-<hash>") and are NOT touched by this tool.
+#
+# Requires: macOS (security(1)), bash, python3.
+set -euo pipefail
+
+VAULT="${SWAP_VAULT:-${XDG_CONFIG_HOME:-$HOME/.config}/swap}"
+CONFIG="$VAULT/accounts.json"
+ACTIVE_FILE="$VAULT/.active"
+KEYCHAIN_SERVICE="Claude Code-credentials"
+
+mkdir -p "$VAULT"
+
+# ── Config helpers ──────────────────────────────────────
+
+load_config() {
+  [ -f "$CONFIG" ] && cat "$CONFIG" || echo '{"accounts":{}}'
+}
+
+save_config() {
+  local json="$1"
+  echo "$json" > "$CONFIG"
+  chmod 600 "$CONFIG"
+}
+
+get_account_field() {
+  local name="$1" field="$2"
+  load_config | NAME="$name" FIELD="$field" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+acct = d.get('accounts', {}).get(os.environ['NAME'], {})
+print(acct.get(os.environ['FIELD'], ''))
+" 2>/dev/null
+}
+
+list_accounts() {
+  load_config | VAULT="$VAULT" ACTIVE_FILE="$ACTIVE_FILE" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+accounts = d.get('accounts', {})
+if not accounts:
+    print('No accounts configured. Use: swap add <name> --email <email>')
+    sys.exit(0)
+af = os.environ['ACTIVE_FILE']
+vault = os.environ['VAULT']
+active = open(af).read().strip() if os.path.exists(af) else ''
+for name, info in sorted(accounts.items()):
+    marker = ' <-' if name == active else ''
+    browser = info.get('browser', 'default')
+    has_creds = 'OK' if os.path.exists(f'{vault}/{name}.keychain') else '--'
+    print(f'  [{has_creds}] {name:15s} {info[\"email\"]:35s} browser={browser}{marker}')
+" 2>/dev/null
+}
+
+# ── Commands ────────────────────────────────────────────
+
+cmd_add() {
+  local name="" email="" browser="default"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --email|-e) email="$2"; shift 2;;
+      --browser|-b) browser="$2"; shift 2;;
+      *) [ -z "$name" ] && name="$1" && shift || { echo "Unknown arg: $1" >&2; exit 1; };;
+    esac
+  done
+  if [ -z "$name" ] || [ -z "$email" ]; then
+    echo "Usage: swap add <name> --email <email> [--browser <browser>]"
+    echo "  browser: Safari, Chrome, 'Brave Browser', Firefox, Arc, default"
+    exit 1
+  fi
+  local config
+  config=$(load_config)
+  config=$(echo "$config" | NAME="$name" EMAIL="$email" BROWSER="$browser" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+d.setdefault('accounts', {})[os.environ['NAME']] = {'email': os.environ['EMAIL'], 'browser': os.environ['BROWSER']}
+print(json.dumps(d, indent=2))
+")
+  save_config "$config"
+  echo "Added account '$name' ($email, browser=$browser)"
+  echo "Now run: swap login $name"
+}
+
+cmd_remove() {
+  local name="$1"
+  local config
+  config=$(load_config)
+  config=$(echo "$config" | NAME="$name" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+d.get('accounts', {}).pop(os.environ['NAME'], None)
+print(json.dumps(d, indent=2))
+")
+  save_config "$config"
+  rm -f "$VAULT/${name}.keychain" "$VAULT/${name}.email"
+  echo "Removed account '$name'"
+}
+
+cmd_login() {
+  local name="$1"
+  local email browser
+  email=$(get_account_field "$name" "email")
+  browser=$(get_account_field "$name" "browser")
+  if [ -z "$email" ]; then
+    echo "Account '$name' not found. Use: swap add $name --email <email>" >&2; exit 1
+  fi
+  echo "Logging in as $email..."
+  # Clear stale Keychain items so a previous account can't shadow this login.
+  keychain_purge
+  if [ "$browser" != "default" ] && [ -n "$browser" ]; then
+    # Force the OAuth URL to open in the specified browser.
+    local tmp_opener
+    tmp_opener=$(mktemp)
+    chmod +x "$tmp_opener"
+    printf '#!/bin/bash\nopen -a "%s" "$1"\n' "$browser" > "$tmp_opener"
+    BROWSER="$tmp_opener" claude auth login --email "$email"
+    rm -f "$tmp_opener"
+  else
+    claude auth login --email "$email"
+  fi
+  cmd_save "$name"
+  printf "%s" "$name" > "$ACTIVE_FILE"
+  echo "Logged in and saved as '$name' ($email)"
+}
+
+cmd_save() {
+  local name="$1"
+  local email
+  email=$(get_account_field "$name" "email")
+  if [ -z "$email" ]; then
+    echo "Account '$name' not found." >&2; exit 1
+  fi
+  # Extract credentials from the Keychain.
+  local creds
+  creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$email" -w 2>/dev/null || echo "")
+  if [ -z "$creds" ]; then
+    # Some versions store without the account filter.
+    creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null || echo "")
+  fi
+  if [ -n "$creds" ]; then
+    echo "$creds" > "$VAULT/${name}.keychain"
+    chmod 600 "$VAULT/${name}.keychain"
+    echo "$email" > "$VAULT/${name}.email"
+    echo "Saved credentials for '$name' ($email)"
+  else
+    echo "No credentials found in Keychain for $email. Login first: swap login $name" >&2
+  fi
+}
+
+keychain_purge() {
+  # Drop every Claude Code-credentials item so a stale one can't shadow the active account.
+  while security delete-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1; do :; done
+}
+
+cmd_restore() {
+  local name="$1"
+  local email creds kc
+  email=$(get_account_field "$name" "email")
+  if [ -z "$email" ]; then
+    echo "Account '$name' not found. Use: swap add $name --email <email>" >&2; exit 1
+  fi
+  kc="$VAULT/${name}.keychain"
+  if [ ! -s "$kc" ]; then
+    echo "No saved credentials for '$name'. Run: swap login $name" >&2; exit 1
+  fi
+  creds=$(cat "$kc")
+  keychain_purge
+  # -U updates if present; -A allows access without a per-read prompt.
+  security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$email" -w "$creds"
+  printf "%s" "$name" > "$ACTIVE_FILE"
+  echo "Switched to '$name' ($email). Restart 'claude' to pick up the account."
+}
+
+cmd_use() {
+  cmd_restore "$1"
+}
+
+account_names() {
+  load_config | python3 -c "
+import json, sys
+for n in sorted(json.load(sys.stdin).get('accounts', {})):
+    print(n)
+" 2>/dev/null
+}
+
+set_account_browser() {
+  local name="$1" browser="$2"
+  local config
+  config=$(load_config)
+  config=$(echo "$config" | NAME="$name" BROWSER="$browser" python3 -c "
+import json, os, sys
+d = json.load(sys.stdin)
+acct = d.setdefault('accounts', {}).get(os.environ['NAME'])
+if acct is not None:
+    acct['browser'] = os.environ['BROWSER']
+print(json.dumps(d, indent=2))
+")
+  save_config "$config"
+}
+
+# Interactive: pick an account, choose a browser, then switch to it.
+cmd_swap() {
+  local -a names=()
+  while IFS= read -r n; do names+=("$n"); done < <(account_names)
+  if [ ${#names[@]} -eq 0 ]; then
+    echo "No accounts yet. Add one first:"
+    echo "  swap add <name> --email <email>"
+    exit 1
+  fi
+
+  local active=""
+  [ -f "$ACTIVE_FILE" ] && active=$(cat "$ACTIVE_FILE")
+
+  echo "Choose an account to swap to:"
+  local i
+  for i in "${!names[@]}"; do
+    local n="${names[$i]}"
+    local email has marker
+    email=$(get_account_field "$n" "email")
+    [ -s "$VAULT/${n}.keychain" ] && has="saved" || has="needs login"
+    [ "$n" = "$active" ] && marker=" (active)" || marker=""
+    printf "  %d) %-15s %-32s [%s]%s\n" "$((i+1))" "$n" "$email" "$has" "$marker"
+  done
+
+  local pick name
+  read -r -p "Account # (or name): " pick
+  if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le ${#names[@]} ]; then
+    name="${names[$((pick-1))]}"
+  else
+    name="$pick"
+  fi
+  if [ -z "$(get_account_field "$name" "email")" ]; then
+    echo "No such account: $name" >&2; exit 1
+  fi
+
+  # Choose which browser handles the OAuth URL (used only if a login is needed).
+  local current_browser browser
+  current_browser=$(get_account_field "$name" "browser")
+  echo ""
+  echo "Which browser for sign-in?"
+  echo "  1) Safari   2) Chrome   3) Brave Browser   4) Firefox   5) Arc"
+  echo "  6) keep current (${current_browser:-default})"
+  local bpick
+  read -r -p "Browser # [6]: " bpick
+  case "${bpick:-6}" in
+    1) browser="Safari";;
+    2) browser="Chrome";;
+    3) browser="Brave Browser";;
+    4) browser="Firefox";;
+    5) browser="Arc";;
+    6|"") browser="$current_browser";;
+    *) browser="$bpick";;  # treat free text as an app name
+  esac
+  [ -n "$browser" ] && set_account_browser "$name" "$browser"
+
+  # Switch: restore cached credentials instantly, or run a browser login if none.
+  if [ -s "$VAULT/${name}.keychain" ]; then
+    cmd_restore "$name"
+  else
+    echo "No saved credentials for '$name' — starting browser login..."
+    cmd_login "$name"
+  fi
+}
+
+cmd_which() {
+  local active="none"
+  [ -f "$ACTIVE_FILE" ] && active=$(cat "$ACTIVE_FILE")
+  local email
+  email=$(get_account_field "$active" "email")
+  if [ -n "$email" ]; then
+    echo "$active ($email)"
+  else
+    echo "$active (unknown)"
+  fi
+}
+
+usage() {
+  echo "swap — Claude Code account switcher"
+  echo ""
+  echo "Run with no command to interactively pick an account and switch."
+  echo ""
+  echo "Commands:"
+  echo "  (no args)                                      Interactive: pick account + browser, switch"
+  echo "  add <name> --email <email> [--browser <app>]   Register an account"
+  echo "  remove <name>                                   Remove an account"
+  echo "  login <name>                                    OAuth login + save credentials"
+  echo "  use <name>                                      Switch to saved credentials (non-interactive)"
+  echo "  save <name>                                     Save current Keychain creds"
+  echo "  list                                            List all accounts"
+  echo "  which                                           Show active account"
+  echo ""
+  echo "Examples:"
+  echo "  swap add work --email you@company.com --browser Chrome"
+  echo "  swap add personal --email you@example.com --browser Safari"
+  echo "  swap            # interactive picker"
+  echo "  swap use personal"
+}
+
+# ── Main ────────────────────────────────────────────────
+
+if [ $# -lt 1 ]; then
+  cmd_swap
+  exit 0
+fi
+
+case "$1" in
+  add)     shift; cmd_add "$@";;
+  remove)  cmd_remove "$2";;
+  login)   cmd_login "$2";;
+  save)    cmd_save "$2";;
+  use)     cmd_use "$2";;
+  swap)    cmd_swap;;
+  list)    list_accounts;;
+  which)   cmd_which;;
+  help|--help|-h) usage;;
+  *)
+    echo "Unknown command '$1'. Run 'swap help' for usage." >&2; exit 1;;
+esac

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Test stub for macOS security(1). Models a single Claude Code-credentials slot
+# backed by $FAKE_KC (cred) + $FAKE_KC.acct (account). NOT a real keychain.
+store="${FAKE_KC:?FAKE_KC must be set}"
+sub="${1:-}"; shift || true
+
+service=""; account=""; value=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s) service="$2"; shift 2;;
+    -a) account="$2"; shift 2;;
+    -U) shift;;
+    -w)
+      if [ "$sub" = "add-generic-password" ] && [ $# -ge 2 ]; then
+        value="$2"; shift 2
+      else
+        shift   # find: -w is a print flag with no value
+      fi;;
+    *) shift;;
+  esac
+done
+
+case "$sub" in
+  add-generic-password)
+    printf '%s' "$value" > "$store"
+    printf '%s' "$account" > "$store.acct"
+    exit 0;;
+  find-generic-password)
+    if [ -s "$store" ]; then cat "$store"; exit 0; else exit 44; fi;;
+  delete-generic-password)
+    if [ -f "$store" ]; then rm -f "$store" "$store.acct"; exit 0; else exit 44; fi;;
+  *)
+    echo "stub security: unsupported subcommand '$sub'" >&2; exit 1;;
+esac

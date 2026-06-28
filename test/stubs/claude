@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Test stub for the `claude` CLI. Only models `claude auth login --email <e>`,
+# which "signs in" by writing a fake credential into the stub keychain slot.
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
+  email=""
+  while [ $# -gt 0 ]; do
+    [ "$1" = "--email" ] && email="${2:-}"
+    shift
+  done
+  : "${FAKE_KC:?FAKE_KC must be set}"
+  printf '{"claudeAiOauth":{"accessToken":"fake-%s","refreshToken":"r","expiresAt":0}}' "$email" > "$FAKE_KC"
+  printf '%s' "$email" > "$FAKE_KC.acct"
+  echo "(stub) logged in as $email"
+  exit 0
+fi
+exit 0
