@@ -72,31 +72,26 @@ Choose an account to swap to:
   2) personal        you@example.com                  [saved]
 Account # (or name): 2
 
-Which browser for sign-in? (detected on this Mac)
-  1) Safari
-  2) Google Chrome
-  3) Firefox
-  Enter = keep current (Safari)
-Browser #:
 ✓ Auth still valid (you@example.com) — no browser sign-in needed. Restart 'claude'.
 ```
 
 It lists every account, lets you pick one, and switches. If that account already
 has cached credentials (the normal case), the switch is an **instant local
 restore** — `claude` starts up already signed into that account with **no
-browser and no in-app `/login`**.
+browser and no in-app `/login`**, and you aren't asked anything else.
 
 After restoring, swap checks the session with `claude auth status`. If it's
 still valid (or just needs a routine token refresh, which Claude does on launch),
-swap says so and **does not** open a browser. It opens the chosen browser to
-re-authenticate **only when the cached session is genuinely expired** — or the
-first time an account is used.
+swap says so and stops there. It opens a browser to re-authenticate **only when
+the cached session is genuinely expired** — or the first time an account is used.
 
-The browser prompt offers **the browsers your Mac actually registers**, with no
-hardcoded app list: the set is derived at runtime by asking LaunchServices which
-top-level applications claim the `http`/`https` URL schemes (the same set macOS
-offers as a default browser), with nested helper browsers and cached copies
-filtered out. That choice only matters when a browser sign-in is actually needed.
+When a browser sign-in *is* needed, swap uses the browser already saved on that
+account and doesn't ask. It only prompts you to pick a browser if the account has
+none saved, or its saved browser is no longer installed. The choices offered are
+**the browsers your Mac actually registers** — derived at runtime by asking
+LaunchServices which top-level apps claim the `http`/`https` URL schemes (the
+same set macOS offers as a default browser), with nested helper browsers and
+cached copies filtered out.
 
 Then **restart `claude`** — it picks up the swapped account automatically.
 

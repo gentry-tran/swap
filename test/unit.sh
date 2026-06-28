@@ -118,42 +118,59 @@ t_eq "swap bootstrap registered account" "$(acct_field bootstrap@example.com ema
 t_eq "swap bootstrap active" "$(cat "$SWAP_VAULT/.active")" "bootstrap@example.com"
 t_file "swap bootstrap cached cred" "$SWAP_VAULT/bootstrap@example.com.keychain"
 
-# --- two cached accounts: restore-first, validity-checked, no needless browser ---
+# --- valid cached account with a saved browser: restore, NO browser prompt ---
 fresh
 run - add work     --email w@example.com --browser Safari   >/dev/null
 run - add personal --email p@example.com --browser Safari   >/dev/null
 run - login work >/dev/null
-run - login personal >/dev/null
-run 'work\n\n' swap               # pick by name, keep browser (Enter)
+run - login personal >/dev/null          # active=personal, slot=personal
+run 'work\n' swap                          # only the account line — no browser prompt expected
 t_rc "swap by name rc0" 0
 t_eq "swap by name active" "$(cat "$SWAP_VAULT/.active")" "work"
 t_eq "swap by name slot restored" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/work.keychain")"
 t_has "swap valid auth -> no browser" "Auth still valid"
-t_eq "swap keep-browser unchanged" "$(acct_field work browser)" "Safari"
-run 'personal\n2\n' swap          # pick #1=personal, browser #2 = Google Chrome
-t_eq "swap by number active" "$(cat "$SWAP_VAULT/.active")" "personal"
-t_eq "swap browser pick #2 -> Google Chrome" "$(acct_field personal browser)" "Google Chrome"
-t_has "swap menu lists detected browsers" "detected on this Mac"
-run 'nope\n' swap                 # invalid account selection
+t_hasnot "swap valid: no browser prompt" "Which browser"
+t_eq "swap saved-browser untouched" "$(acct_field work browser)" "Safari"
+run 'nope\n' swap                        # invalid account selection
 t_rc "swap invalid pick rc1" 1; t_has "swap invalid msg" "No such account"
 
-# --- cached but EXPIRED session (no refresh token) -> browser re-auth ---
+# --- expired session WITH a saved installed browser: re-auth, NO prompt ---
 fresh
 run - add exp --email exp@example.com --browser Safari >/dev/null
 printf '%s' '{"claudeAiOauth":{"accessToken":"EXPIRED-TOKEN","expiresAt":0}}' > "$SWAP_VAULT/exp.keychain"
-run 'exp\n\n' swap
+run 'exp\n' swap
 t_rc "swap expired rc0" 0
 t_has "swap expired announces re-auth" "is expired"
+t_hasnot "swap expired: no prompt (browser saved)" "Which browser"
 t_filehas "swap expired re-logged in" "$SWAP_VAULT/exp.keychain" "fake-exp@example.com"
 t_eq "swap expired active" "$(cat "$SWAP_VAULT/.active")" "exp"
 
-# --- no cache at all -> browser sign-in ---
+# --- needs-login WITH a saved installed browser: NO prompt ---
 fresh
 run - add fresh1 --email f@example.com --browser Safari >/dev/null
-run 'fresh1\n\n' swap
+run 'fresh1\n' swap
 t_rc "swap needs-login rc0" 0
+t_hasnot "swap needs-login: no prompt (browser saved)" "Which browser"
 t_has "swap needs-login runs login" "to sign in"
 t_file "swap needs-login cached cred" "$SWAP_VAULT/fresh1.keychain"
+
+# --- needs-login with saved browser NOT installed: DOES prompt, on this account ---
+fresh
+run - add br --email br@example.com --browser "Brave Browser" >/dev/null   # not in stub-detected set
+run 'br\n2\n' swap                       # account, then browser #2 (Google Chrome)
+t_rc "swap reprompt rc0" 0
+t_has "swap reprompts when saved browser missing" "Which browser"
+t_eq "swap reprompt saved new browser" "$(acct_field br browser)" "Google Chrome"
+t_filehas "swap reprompt logged in" "$SWAP_VAULT/br.keychain" "fake-br@example.com"
+t_eq "swap reprompt active" "$(cat "$SWAP_VAULT/.active")" "br"
+
+# --- "default" browser counts as saved: NO prompt ---
+fresh
+run - add d1 --email d@example.com >/dev/null    # browser defaults to "default"
+run 'd1\n' swap
+t_rc "swap default-browser rc0" 0
+t_hasnot "swap default-browser: no prompt" "Which browser"
+t_file "swap default-browser logged in" "$SWAP_VAULT/d1.keychain"
 
 echo "## browser detection (LaunchServices-derived, filtered) via 'swap browsers'"
 run - browsers

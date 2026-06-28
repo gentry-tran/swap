@@ -299,7 +299,30 @@ choose_browser() {
   else printf '%s' "$bpick"; fi
 }
 
-# Interactive: pick an account, choose a browser, then switch to it.
+# True if a browser value is usable: "default" (system browser) or a detected app.
+browser_installed() {
+  local target="$1" b
+  [ "$target" = "default" ] && return 0
+  while IFS= read -r b; do [ "$b" = "$target" ] && return 0; done < <(detect_browsers)
+  return 1
+}
+
+# Decide the browser for a sign-in. If the account already has a usable saved
+# browser, use it silently. Only prompt when none is saved or it's not installed.
+# Echoes the browser to stdout (any prompt goes to stderr).
+ensure_browser() {
+  local name="$1" br
+  br=$(get_account_field "$name" "browser")
+  if [ -n "$br" ] && browser_installed "$br"; then
+    printf '%s' "$br"; return
+  fi
+  br="$(choose_browser "$br")"
+  set_account_browser "$name" "$br"
+  printf '%s' "$br"
+}
+
+# Interactive: pick an account, then switch to it (prompting for a browser only
+# when a sign-in is actually needed and no usable browser is saved).
 cmd_swap() {
   local -a names=()
   while IFS= read -r n; do names+=("$n"); done < <(account_names)
@@ -351,9 +374,6 @@ cmd_swap() {
     echo "No such account: $name" >&2; exit 1
   fi
 
-  browser="$(choose_browser "$(get_account_field "$name" "browser")")"
-  [ -n "$browser" ] && set_account_browser "$name" "$browser"
-
   echo ""
   if [ -s "$VAULT/${name}.keychain" ]; then
     # Cached creds exist: restore them, then check whether they're still good.
@@ -365,14 +385,18 @@ cmd_swap() {
     elif blob_has_refresh "$VAULT/${name}.keychain"; then
       echo "✓ Cached credentials present — Claude will refresh the token automatically on launch. No sign-in needed."
     else
-      echo "Cached auth for '$name' is expired — opening ${browser:-the default browser} to re-authenticate..."
+      echo "Cached auth for '$name' is expired — re-authenticating..."
+      local browser; browser="$(ensure_browser "$name")"
+      echo "Opening ${browser:-the default browser} to sign in..."
       cmd_login "$name"
     fi
   else
     # First time for this account (or cache cleared): seed it with one browser
     # OAuth. After this, future swaps are instant restores.
-    local em; em=$(get_account_field "$name" "email")
-    echo "No saved credentials for '$name' yet — opening ${browser:-the default browser} to sign in as ${em}..."
+    local em browser; em=$(get_account_field "$name" "email")
+    echo "No saved credentials for '$name' yet."
+    browser="$(ensure_browser "$name")"
+    echo "Opening ${browser:-the default browser} to sign in as ${em}..."
     cmd_login "$name"
   fi
 }
