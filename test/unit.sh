@@ -136,15 +136,18 @@ fresh
 run - add fresh1 --email f@example.com --browser Safari >/dev/null
 run 'fresh1\n\n' swap
 t_rc "swap needs-login rc0" 0
-t_has "swap needs-login runs login" "starting browser login"
+t_has "swap needs-login runs login" "to sign in"
 t_file "swap needs-login cached cred" "$SWAP_VAULT/fresh1.keychain"
 
-echo "## browser detection"
-run - help >/dev/null   # noop to keep RC clean
-DETECTED="$(cd "$REPO" && bash -c 'source <(sed -n "/^detect_browsers()/,/^}/p" swap); detect_browsers')"
-t_eq "detect: Safari present"        "$(grep -c '^Safari$' <<<"$DETECTED")" "1"
-t_eq "detect: Google Chrome present" "$(grep -c '^Google Chrome$' <<<"$DETECTED")" "1"
-t_eq "detect: Firefox present"       "$(grep -c '^Firefox$' <<<"$DETECTED")" "1"
-t_eq "detect: Arc absent (stub)"     "$(grep -c '^Arc$' <<<"$DETECTED")" "0"
+echo "## browser detection (LaunchServices-derived, filtered)"
+DETECTED="$(cd "$REPO" && bash -c 'source <(sed -n "/^detect_browsers()/,/^}\$/p" swap); detect_browsers')"
+t_eq "detect: Safari present"          "$(grep -c '^Safari$' <<<"$DETECTED")" "1"
+t_eq "detect: Google Chrome present"   "$(grep -c '^Google Chrome$' <<<"$DETECTED")" "1"
+t_eq "detect: Firefox present"         "$(grep -c '^Firefox$' <<<"$DETECTED")" "1"
+t_eq "detect: nested helper filtered"  "$(grep -c '^Chromium$' <<<"$DETECTED")" "0"
+t_eq "detect: cached copy filtered"    "$(grep -c '^Camoufox$' <<<"$DETECTED")" "0"
+t_eq "detect: non-browser filtered"    "$(grep -c '^Mail$' <<<"$DETECTED")" "0"
+t_eq "detect: exactly 3 real browsers" "$(grep -c . <<<"$DETECTED")" "3"
+t_eq "detect: sorted deterministically" "$(printf '%s' "$DETECTED" | tr '\n' '|')" "Firefox|Google Chrome|Safari"
 
 summary

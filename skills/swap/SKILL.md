@@ -78,10 +78,13 @@ swap use work       # restart `claude` to pick it up
   tiny opener script (`open -a "<app>"`), so each account logs in under the right
   browser profile. The value is stored per-account in `accounts.json` and used
   only on the login path; restoring a cached credential is browser-independent.
-- The interactive picker does not assume a fixed browser list — it probes which
-  browsers are installed with `open -Ra "<app>"` (which resolves an app via
-  LaunchServices without launching it) and offers only those, so it can never
-  pick a browser the machine doesn't have.
+- The interactive picker uses **no hardcoded browser list**. It runs
+  `lsregister -dump` and keeps the top-level applications whose `claimed schemes`
+  include both `http:` and `https:` — i.e. the apps macOS itself would offer as a
+  default web browser. Browsers nested inside another `.app` and cached/throwaway
+  copies (e.g. under `~/Library/Caches`) are filtered out, and the result is
+  sorted for deterministic ordering. `SWAP_LSREGISTER` overrides the lsregister
+  path for testing.
 
 Vault location: `~/.config/swap` (override with `SWAP_VAULT`).
 

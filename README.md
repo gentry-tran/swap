@@ -69,23 +69,29 @@ Which browser for sign-in? (detected on this Mac)
   3) Firefox
   Enter = keep current (Safari)
 Browser #:
-Switched to 'personal' (you@example.com). Restart 'claude' to pick up the account.
+Switched to 'personal' (you@example.com). Restart 'claude' — it'll be signed in automatically (no /login).
 ```
 
-It lists every account, lets you pick one, then asks which browser to use for
-sign-in — **only the browsers actually installed on this Mac**, detected at
-runtime with `open -Ra`, so the menu never offers a browser you don't have. If
-the account already has a cached credential the switch is instant and
-browser-independent; the browser only matters when a fresh browser login is
-needed.
+It lists every account, lets you pick one, and switches. If that account already
+has cached credentials (the normal case), the switch is an **instant local
+restore** — `claude` starts up already signed into that account with **no
+browser and no in-app `/login`**. You only get sent to the browser the *first*
+time an account is used (or if its cache was cleared); after that one-time seed,
+every future swap is instant.
 
-Then **restart `claude`** to pick up the new account.
+The browser prompt offers **the browsers your Mac actually registers**, with no
+hardcoded app list: the set is derived at runtime by asking LaunchServices which
+top-level applications claim the `http`/`https` URL schemes (the same set macOS
+offers as a default browser), with nested helper browsers and cached copies
+filtered out. That choice only matters on the one-time browser sign-in.
+
+Then **restart `claude`** — it picks up the swapped account automatically.
 
 ### Non-interactive commands
 
 | Command | What it does |
 |---------|--------------|
-| `swap` | Interactive picker (choose account + browser, switch) |
+| `swap` | Interactive picker: choose account → instant restore (browser sign-in only to seed a new account) |
 | `swap add <name> --email <e> [--browser <app>]` | Register an account |
 | `swap login <name>` | Browser OAuth, then cache the credential |
 | `swap use <name>` | Switch to a cached account (no prompts) |

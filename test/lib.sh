@@ -16,6 +16,7 @@ init_sandbox() {
   chmod +x "$HERE"/stubs/* "$SWAP" 2>/dev/null || true
   export FAKE_KC="$SANDBOX/slot"
   export SWAP_VAULT="$SANDBOX/vault"
+  export SWAP_LSREGISTER="$HERE/stubs/lsregister"   # deterministic browser detection
   mkdir -p "$SWAP_VAULT"
   trap 'rm -rf "$SANDBOX"' EXIT
 }

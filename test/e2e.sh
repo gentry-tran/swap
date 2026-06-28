@@ -15,6 +15,7 @@ export PATH="$HERE/stubs:$PATH"
 chmod +x "$HERE/stubs/claude" "$HERE/stubs/security" "$SWAP"
 export FAKE_KC="$WORK/keychain.slot"
 export SWAP_VAULT="$WORK/vault"
+export SWAP_LSREGISTER="$HERE/stubs/lsregister"
 
 pass=0; fail=0
 ok()   { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }

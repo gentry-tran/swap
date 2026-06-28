@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Test stub for LaunchServices `lsregister -dump`. Emits a fixed registration
+# dump so browser detection is deterministic in tests. Includes decoys that must
+# be filtered out: a nested helper browser, a cached copy, and a non-browser app.
+D=$(printf '%.0s-' {1..80})
+cat <<EOF
+bundle id:                  Safari (0x1)
+path:                       /System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app (0x1)
+claimed schemes:            file:, http:, https:
+$D
+bundle id:                  Google Chrome (0x2)
+path:                       /Applications/Google Chrome.app (0x2)
+claimed schemes:            file:, http:, https:
+$D
+bundle id:                  Firefox (0x3)
+path:                       /Applications/Firefox.app (0x3)
+claimed schemes:            http:, https:
+$D
+bundle id:                  Chromium nested decoy (0x4)
+path:                       /Applications/Burp Suite.app/Contents/Resources/Chromium.app (0x4)
+claimed schemes:            http:, https:
+$D
+bundle id:                  Camoufox cache decoy (0x5)
+path:                       $HOME/Library/Caches/camoufox/Camoufox.app (0x5)
+claimed schemes:            http:, https:
+$D
+bundle id:                  Mail non-browser decoy (0x6)
+path:                       /System/Applications/Mail.app (0x6)
+claimed schemes:            mailto:
+EOF

@@ -191,7 +191,7 @@ cmd_restore() {
   # -U updates if present; -A allows access without a per-read prompt.
   security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$email" -w "$creds"
   printf "%s" "$name" > "$ACTIVE_FILE"
-  echo "Switched to '$name' ($email). Restart 'claude' to pick up the account."
+  echo "Switched to '$name' ($email). Restart 'claude' — it'll be signed in automatically (no /login)."
 }
 
 cmd_use() {
@@ -221,15 +221,36 @@ print(json.dumps(d, indent=2))
   save_config "$config"
 }
 
-# List browsers actually installed on this Mac, in preference order.
-# `open -Ra <name>` succeeds (without launching) only if the app is registered.
+# Enumerate the browsers registered on THIS machine — no hardcoded app list.
+# Asks LaunchServices (via lsregister -dump) which top-level applications claim
+# the http+https URL schemes; that is exactly the set macOS would offer as a
+# default web browser. Nested helper apps (browsers bundled inside other apps)
+# and cached/throwaway copies are filtered out. Deterministic: sorted by name.
+# SWAP_LSREGISTER overrides the lsregister path (used by the test suite).
 detect_browsers() {
-  local candidates=("Safari" "Google Chrome" "Brave Browser" "Firefox" "Arc" \
-                    "Microsoft Edge" "Dia" "Vivaldi" "Opera" "Chromium")
-  local b
-  for b in "${candidates[@]}"; do
-    if open -Ra "$b" >/dev/null 2>&1; then printf '%s\n' "$b"; fi
-  done
+  local lsr="${SWAP_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister}"
+  [ -x "$lsr" ] || return 0
+  "$lsr" -dump 2>/dev/null | python3 -c '
+import sys, os, re
+home = os.path.expanduser("~")
+parents = {"/Applications", "/System/Applications",
+           "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
+           home + "/Applications"}
+def is_top_level_app(p):
+    # A real installed app: <Applications-dir>/<Name>.app, not nested in another bundle.
+    return p.endswith(".app") and p.count(".app") == 1 and os.path.dirname(p) in parents
+seen = {}
+for block in re.split(r"^-{80}$", sys.stdin.read(), flags=re.M):
+    schemes = [l.strip() for l in block.splitlines() if l.strip().startswith("claimed schemes:")]
+    if not schemes or "http:" not in schemes[0] or "https:" not in schemes[0]:
+        continue
+    m = re.search(r"^\s*path:\s+(/.*\.app)(?:\s+\(0x[0-9a-f]+\))?\s*$", block, re.M)
+    if not m or not is_top_level_app(m.group(1)):
+        continue
+    seen.setdefault(os.path.basename(m.group(1))[:-4], m.group(1))
+for name in sorted(seen):
+    print(name)
+'
 }
 
 # Interactive: pick an account, choose a browser, then switch to it.
@@ -295,11 +316,17 @@ cmd_swap() {
   fi
   [ -n "$browser" ] && set_account_browser "$name" "$browser"
 
-  # Switch: restore cached credentials instantly, or run a browser login if none.
+  echo ""
   if [ -s "$VAULT/${name}.keychain" ]; then
+    # Cached creds exist: restore them. `claude` then starts already signed in —
+    # no browser, no in-app /login. (The browser choice above only matters if a
+    # fresh sign-in is ever needed.)
     cmd_restore "$name"
   else
-    echo "No saved credentials for '$name' — starting browser login..."
+    # First time for this account (or cache cleared): seed it with one browser
+    # OAuth. After this, future swaps are instant restores.
+    local em; em=$(get_account_field "$name" "email")
+    echo "No saved credentials for '$name' yet — opening ${browser:-the default browser} to sign in as ${em}..."
     cmd_login "$name"
   fi
 }
