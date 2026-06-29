@@ -17,13 +17,14 @@ init_sandbox() {
   export FAKE_KC="$SANDBOX/slot"
   export SWAP_VAULT="$SANDBOX/vault"
   export SWAP_LSREGISTER="$HERE/stubs/lsregister"   # deterministic browser detection
+  export SWAP_CLAUDE_JSON="$SANDBOX/claude.json"    # stand-in for ~/.claude.json
   mkdir -p "$SWAP_VAULT"
   trap 'rm -rf "$SANDBOX"' EXIT
 }
 
-# Reset to an empty vault + empty keychain slot between tests.
+# Reset to an empty vault + empty keychain slot + empty identity between tests.
 fresh() {
-  rm -rf "$SWAP_VAULT" "$FAKE_KC" "$FAKE_KC.acct"
+  rm -rf "$SWAP_VAULT" "$FAKE_KC" "$FAKE_KC.acct" "$FAKE_KC.email" "$SWAP_CLAUDE_JSON"
   mkdir -p "$SWAP_VAULT"
 }
 

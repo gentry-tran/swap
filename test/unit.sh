@@ -173,6 +173,24 @@ t_rc "swap default-browser rc0" 0
 t_hasnot "swap default-browser: no prompt" "Which browser"
 t_file "swap default-browser logged in" "$SWAP_VAULT/d1.keychain"
 
+echo "## identity (oauthAccount) saved + restored with the token"
+cj_email(){ python3 -c "import json,os
+try: print(json.load(open(os.environ['SWAP_CLAUDE_JSON'])).get('oauthAccount',{}).get('emailAddress',''))
+except Exception: print('')"; }
+fresh
+run - add work --email w@example.com >/dev/null
+run - login work >/dev/null                       # stub writes .claude.json oauthAccount=w + token
+t_file "login saved identity block" "$SWAP_VAULT/work.oauth.json"
+t_eq "login set identity in .claude.json" "$(cj_email)" "w@example.com"
+# simulate a switch-away corrupting the identity, then restore it via use
+python3 -c "import json,os;p=os.environ['SWAP_CLAUDE_JSON'];d=json.load(open(p));d['oauthAccount']['emailAddress']='STALE@example.com';json.dump(d,open(p,'w'))"
+t_eq "identity corrupted pre-restore" "$(cj_email)" "STALE@example.com"
+run - use work
+t_eq "use restored identity (oauthAccount)" "$(cj_email)" "w@example.com"
+# remove cleans the identity file too
+run - remove work
+t_nofile "remove deleted identity file" "$SWAP_VAULT/work.oauth.json"
+
 echo "## browser detection (LaunchServices-derived, filtered) via 'swap browsers'"
 run - browsers
 t_rc "browsers rc0" 0

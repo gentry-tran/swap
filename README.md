@@ -1,19 +1,64 @@
-# swap
+```
+███████╗██╗    ██╗ █████╗ ██████╗
+██╔════╝██║    ██║██╔══██╗██╔══██╗
+███████╗██║ █╗ ██║███████║██████╔╝
+╚════██║██║███╗██║██╔══██║██╔═══╝
+███████║╚███╔███╔╝██║  ██║██║
+╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝
+   instant Claude Code account switching for macOS
+```
 
-Instant account switching for [Claude Code](https://claude.com/claude-code) on macOS — juggle multiple Claude subscriptions without re-logging-in through the browser every time.
+Juggle multiple [Claude Code](https://claude.com/claude-code) subscriptions on one
+Mac and switch between them in one command — no browser re-login every time.
+
+---
 
 ## The problem
 
-Claude Code authenticates with a single OAuth credential stored in the macOS
-login Keychain under the service name `Claude Code-credentials`. There is only
-one slot, so signing into a second subscription **overwrites** the first.
-Switching back means another full browser OAuth round-trip — every time.
+Claude Code is single-account by design. Signing into a second subscription
+**overwrites** the first, and switching back means another full browser OAuth
+round-trip. `swap` makes switching instant by backing up and restoring each
+account's credentials locally.
 
-## What it does
+## How Claude Code authentication works
 
-`swap` keeps a per-account backup of that Keychain credential in a local vault
-and restores it on demand. Set your accounts up once; after that, switching is a
-single instant command with no browser.
+This is the important part — and the part most "switcher" scripts get wrong.
+A signed-in account is **two pieces of state**, and *both* must match:
+
+| # | What | Where | Keyed by |
+|---|------|-------|----------|
+| 1 | **The token** (OAuth access + refresh) | macOS **login Keychain**, service `Claude Code-credentials` | the **macOS user name** (`whoami`) — *not* the email |
+| 2 | **The identity** (email, account/org UUIDs) | **`~/.claude.json`** → `oauthAccount` block | — |
+
+Two gotchas that each cause a confusing "please log in again":
+
+- **Token keyed by the OS user, not the email.** If you restore the Keychain
+  item under an account named after the email, `claude` looks it up by the OS
+  user, doesn't find it, and forces a fresh login — even though the token is
+  perfectly valid.
+- **Identity lives in `~/.claude.json`, not the Keychain.** `claude auth status`
+  reports the email from `oauthAccount`, *not* from the token. Swap the token but
+  leave `oauthAccount` pointing at the old account and `claude` keeps showing the
+  old account — "the auth didn't update."
+
+`swap` handles both. Restoring an account writes the token to the Keychain under
+`-a "$USER"` **and** restores that account's `oauthAccount` block into
+`~/.claude.json`.
+
+```
+   vault (~/.config/swap)         macOS Keychain            ~/.claude.json
+ ┌──────────────────────┐      ┌────────────────────┐    ┌────────────────┐
+ │ work.keychain (token)│──┐   │ Claude Code-creds  │    │  oauthAccount  │
+ │ work.oauth.json (id) │  ├──▶│  acct = $USER      │ +  │  (identity)    │
+ │ work.email           │  │   └────────────────────┘    └────────────────┘
+ └──────────────────────┘  │            ▲                        ▲
+            swap use work ──┘     token restored          identity restored
+```
+
+**Token refresh:** an `accessToken` whose `expiresAt` is in the past still works
+if its `refreshToken` is valid — `claude` refreshes on launch. Refreshing rotates
+the refresh token, so the same credential can't be live on two machines forever;
+last machine to refresh wins.
 
 ## Install
 
@@ -30,45 +75,21 @@ curl -fsSL https://raw.githubusercontent.com/gentry-tran/swap/main/swap \
 ```
 
 Make sure `~/.local/bin` is on your `PATH`. Requirements: macOS, `bash`,
-`python3`, and Claude Code (`claude`) already installed.
+`python3`, and Claude Code (`claude`) installed.
 
 ## Quick start
 
-No accounts yet? Just run `swap` — with an empty vault it runs Claude's own
-sign-in (`claude auth login`), then saves whatever account you logged into,
-named by its email. Repeat for each subscription. After that, `swap` switches
-between them instantly.
+No accounts yet? Just run `swap`. With an empty vault it runs Claude's own
+sign-in (`claude auth login`), reads the resulting email from
+`claude auth status`, and registers that account automatically. Repeat once per
+subscription — after that, switching is instant.
 
-## Set up (one time per account)
+```bash
+swap            # empty vault → sign in, auto-register
+swap            # later → pick an account, switch instantly
+```
 
-You can also register accounts explicitly:
-
-1. **Register** each subscription you use, with the browser its login should open in:
-
-   ```bash
-   swap add work     --email you@company.com --browser Chrome
-   swap add personal --email you@example.com --browser Safari
-   ```
-
-2. **Log in** to each once. This opens the OAuth flow in the chosen browser and
-   caches the credential into the vault:
-
-   ```bash
-   swap login work
-   swap login personal
-   ```
-
-   Already signed into one account in Claude Code? Skip its login and just snapshot
-   the live credential instead:
-
-   ```bash
-   swap add current --email you@whatever.com
-   swap save current
-   ```
-
-That's it — your accounts are saved.
-
-## Daily use
+## Usage
 
 Run `swap` with no arguments for the interactive picker:
 
@@ -82,90 +103,75 @@ Account # (or name): 2
 ✓ Auth still valid (you@example.com) — no browser sign-in needed. Restart 'claude'.
 ```
 
-It lists every account, lets you pick one, and switches. If that account already
-has cached credentials (the normal case), the switch is an **instant local
-restore** — `claude` starts up already signed into that account with **no
-browser and no in-app `/login`**, and you aren't asked anything else.
+What happens when you pick an account:
 
-After restoring, swap checks the session with `claude auth status`. If it's
-still valid (or just needs a routine token refresh, which Claude does on launch),
-swap says so and stops there. It opens a browser to re-authenticate **only when
-the cached session is genuinely expired** — or the first time an account is used.
+1. **Restore** its token (Keychain) and identity (`oauthAccount`) — instant, local.
+2. **Check** the session with `claude auth status`:
+   - still valid (or just needs a routine token refresh) → done, **no browser**.
+   - genuinely expired → open a browser to re-authenticate.
+3. **Restart `claude`** — it comes up already signed into that account, no `/login`.
 
-When a browser sign-in *is* needed, swap uses the browser already saved on that
-account and doesn't ask. It only prompts you to pick a browser if the account has
-none saved, or its saved browser is no longer installed. The choices offered are
-**the browsers your Mac actually registers** — derived at runtime by asking
-LaunchServices which top-level apps claim the `http`/`https` URL schemes (the
-same set macOS offers as a default browser), with nested helper browsers and
-cached copies filtered out.
+**Browser prompt only when needed.** swap uses the browser already saved on the
+account and asks nothing. It prompts you to pick a browser *only* if a sign-in is
+actually required *and* the account has no usable browser saved (none set, or the
+saved one isn't installed). The options offered are **the browsers your Mac
+actually registers** — derived at runtime from LaunchServices (the apps that
+claim `http`/`https`, i.e. the set macOS offers as a default browser), with
+nested helper browsers and cached copies filtered out. `swap browsers` prints it.
 
-Then **restart `claude`** — it picks up the swapped account automatically.
-
-### Non-interactive commands
+### Commands
 
 | Command | What it does |
 |---------|--------------|
-| `swap` | Interactive picker. Empty vault → native `claude auth login` + auto-register. Otherwise: pick account → instant restore, re-auth in browser only if expired |
+| `swap` | Interactive. Empty vault → native `claude auth login` + auto-register. Otherwise pick an account → instant restore, browser re-auth only if expired |
 | `swap add <name> --email <e> [--browser <app>]` | Register an account |
-| `swap login <name>` | Browser OAuth, then cache the credential |
+| `swap login <name>` | Browser OAuth, then cache token + identity |
 | `swap use <name>` | Switch to a cached account (no prompts) |
-| `swap save <name>` | Snapshot the current live credential into the vault |
+| `swap save <name>` | Snapshot the current live token + identity into the vault |
 | `swap list` | List configured accounts |
 | `swap which` | Show the active account |
 | `swap browsers` | List the browsers detected on this Mac |
 | `swap remove <name>` | Forget an account |
 
-`--browser` accepts: `Safari`, `Chrome`, `Brave Browser`, `Firefox`, `Arc`, or
-`default`.
-
-## Test the flow end to end
-
-The repo ships a hermetic self-test that exercises the whole add → login → save →
-swap → use cycle against **stubbed** `claude` and `security` binaries, so it never
-touches your real Keychain or credentials:
-
-```bash
-./test/e2e.sh
-```
-
-It uses a throwaway `SWAP_VAULT` in a temp dir and asserts the vault files,
-`.active` marker, and credential round-trip are correct. Expect `ALL TESTS PASSED`.
-
-## How it works
-
-The full mechanism — Keychain service names, OAuth access/refresh tokens, why an
-"expired" imported credential still works (refresh tokens), and the
-per-config-dir Keychain isolation that lets multiple accounts run *concurrently*
-— is documented in the bundled Claude Code skill:
-
-- [`skills/swap/SKILL.md`](skills/swap/SKILL.md)
-
-Copy that folder into `~/.claude/skills/` and Claude Code itself can explain and
-drive the tool for you.
+`--browser` accepts any installed app name (`Safari`, `Google Chrome`,
+`Brave Browser`, `Firefox`, `Arc`, …) or `default` (system default browser).
 
 ## Vault
 
-State lives in `~/.config/swap` (override with `SWAP_VAULT`):
+State lives in `~/.config/swap` (override with `SWAP_VAULT`), chmod-600:
 
-| File | Purpose |
-|------|---------|
+| File | Holds |
+|------|-------|
 | `accounts.json` | registry: `name -> { email, browser }` |
-| `<name>.keychain` | saved OAuth credential blob (mode 600) |
-| `<name>.email` | account email used as the Keychain restore key |
+| `<name>.keychain` | the OAuth **token** blob |
+| `<name>.oauth.json` | the `oauthAccount` **identity** block |
+| `<name>.email` | the account email (display/metadata) |
 | `.active` | name of the currently restored account |
 
-The `.keychain` files contain live OAuth tokens. The vault is chmod-600 and
-**must not** be committed or shared (`.gitignore` already excludes it).
+The `.keychain` and `.oauth.json` files are live secrets — the vault is
+chmod-600 and `.gitignore`d. Never commit or share them.
+
+## Testing
+
+Fully hermetic suite — `claude`, `security`, `open`/`lsregister` are stubbed and
+a throwaway vault + config are used, so it never touches your real Keychain,
+credentials, or `~/.claude.json`:
+
+```bash
+./test/run.sh        # unit (per-command) + e2e (integration)
+```
+
+Covers every command and the tricky bits: token keyed by `$USER`, `oauthAccount`
+save/restore, the validity check, empty-vault bootstrap, and browser detection.
 
 ## Scope & limitations
 
-- **macOS only** — depends on `security(1)` and the login Keychain.
-- Manages the **default** profile's Keychain item only. Concurrent profiles that
-  set a custom `CLAUDE_CONFIG_DIR` use a separate `Claude Code-credentials-<hash>`
-  service and are intentionally left untouched — see the skill for that pattern.
-- **Over SSH** the login Keychain may be locked; run `security unlock-keychain`
-  first, or operate in a local GUI session.
+- **macOS only** — depends on `security(1)`, the login Keychain, and `~/.claude.json`.
+- Manages the **default** Claude Code profile. Concurrent profiles that set a
+  custom `CLAUDE_CONFIG_DIR` use a separate `Claude Code-credentials-<hash>`
+  Keychain item and their own config dir; those are intentionally left alone.
+- **Over SSH** the login Keychain is often locked — run `security unlock-keychain`
+  first, or switch in a local GUI session.
 
 ## License
 

@@ -25,6 +25,7 @@ if [ -f "$OLD_VAULT/accounts.json" ] && [ ! -f "$NEW_VAULT/accounts.json" ]; the
   cp -p "$OLD_VAULT"/accounts.json "$NEW_VAULT"/ 2>/dev/null || true
   cp -p "$OLD_VAULT"/.active "$NEW_VAULT"/ 2>/dev/null || true
   cp -p "$OLD_VAULT"/*.keychain "$NEW_VAULT"/ 2>/dev/null || true
+  cp -p "$OLD_VAULT"/*.oauth.json "$NEW_VAULT"/ 2>/dev/null || true
   cp -p "$OLD_VAULT"/*.email "$NEW_VAULT"/ 2>/dev/null || true
   chmod 700 "$NEW_VAULT"
   echo "Migrated vault: $OLD_VAULT -> $NEW_VAULT"

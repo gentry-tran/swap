@@ -12,8 +12,9 @@
 #
 # Vault layout (~/.config/swap by default):
 #   accounts.json        registry: { name -> { email, browser } }
-#   <name>.keychain      saved credential blob for that account
-#   <name>.email         the account's email (restore key)
+#   <name>.keychain      saved Keychain credential blob (the OAuth token)
+#   <name>.oauth.json    saved .claude.json `oauthAccount` block (the identity)
+#   <name>.email         the account's email (display/metadata)
 #   .active              name of the currently restored account
 #
 # SCOPE: manages ONLY the default Claude Code profile (Keychain service
@@ -32,6 +33,12 @@ KEYCHAIN_SERVICE="Claude Code-credentials"
 # user), NOT the email. The Keychain item MUST be written with this exact
 # account attribute or `claude` won't find it and will demand a fresh login.
 KEYCHAIN_ACCOUNT="${USER:-$(id -un)}"
+
+# Claude Code records WHICH account is active in this JSON file's `oauthAccount`
+# block (email, account/org UUIDs). The Keychain holds the token; this file holds
+# the identity. A full switch must swap BOTH — restoring only the token leaves
+# `claude` reporting the previous account ("auth didn't update").
+CLAUDE_JSON="${SWAP_CLAUDE_JSON:-$HOME/.claude.json}"
 
 mkdir -p "$VAULT"
 
@@ -119,7 +126,7 @@ d.get('accounts', {}).pop(os.environ['NAME'], None)
 print(json.dumps(d, indent=2))
 ")
   save_config "$config"
-  rm -f "$VAULT/${name}.keychain" "$VAULT/${name}.email"
+  rm -f "$VAULT/${name}.keychain" "$VAULT/${name}.email" "$VAULT/${name}.oauth.json"
   echo "Removed account '$name'"
 }
 
@@ -136,6 +143,40 @@ cmd_login() {
   cmd_save "$name"
   printf "%s" "$name" > "$ACTIVE_FILE"
   echo "Logged in and saved as '$name' ($email)"
+}
+
+# Save the active account's `oauthAccount` identity block (from .claude.json).
+save_oauth() {
+  local name="$1"
+  [ -f "$CLAUDE_JSON" ] || return 0
+  CJ="$CLAUDE_JSON" OUT="$VAULT/${name}.oauth.json" python3 -c "
+import json, os
+try: d = json.load(open(os.environ['CJ']))
+except Exception: raise SystemExit
+oa = d.get('oauthAccount')
+if oa is not None:
+    json.dump(oa, open(os.environ['OUT'], 'w'))
+" 2>/dev/null
+  [ -f "$VAULT/${name}.oauth.json" ] && chmod 600 "$VAULT/${name}.oauth.json"
+  return 0
+}
+
+# Restore an account's `oauthAccount` identity block into .claude.json so that
+# `claude` reports/uses the matching account (the token alone is not enough).
+restore_oauth() {
+  local name="$1" f="$VAULT/${name}.oauth.json"
+  [ -s "$f" ] || return 0
+  [ -f "$CLAUDE_JSON" ] || return 0
+  CJ="$CLAUDE_JSON" OA="$f" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['CJ']))
+    oa = json.load(open(os.environ['OA']))
+except Exception: raise SystemExit
+d['oauthAccount'] = oa
+json.dump(d, open(os.environ['CJ'], 'w'))
+" 2>/dev/null
+  return 0
 }
 
 cmd_save() {
@@ -156,6 +197,7 @@ cmd_save() {
     echo "$creds" > "$VAULT/${name}.keychain"
     chmod 600 "$VAULT/${name}.keychain"
     echo "$email" > "$VAULT/${name}.email"
+    save_oauth "$name"          # capture the matching identity block too
     echo "Saved credentials for '$name' ($email)"
   else
     echo "No credentials found in Keychain for $email. Login first: swap login $name" >&2
@@ -183,6 +225,7 @@ cmd_restore() {
   # Write the item under the macOS account name claude reads (NOT the email),
   # or claude won't find it and will force a fresh login. -U updates if present.
   security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w "$creds"
+  restore_oauth "$name"         # swap the identity block too, or claude shows the old account
   printf "%s" "$name" > "$ACTIVE_FILE"
   echo "Switched to '$name' ($email). Restart 'claude' — it'll be signed in automatically (no /login)."
 }

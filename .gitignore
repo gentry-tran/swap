@@ -1,5 +1,6 @@
-# Never commit vault contents (live OAuth tokens)
+# Never commit vault contents (live OAuth tokens + account identity)
 *.keychain
+*.oauth.json
 *.email
 accounts.json
 .active

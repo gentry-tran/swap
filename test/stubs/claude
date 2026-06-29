@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Test stub for the `claude` CLI. Models the subcommands swap uses:
-#   claude auth login [--email <e>]  -> "sign in": write a fake credential into
-#                                       the stub keychain slot ($FAKE_KC) keyed
-#                                       (like the real claude) by the macOS user
-#                                       in $FAKE_KC.acct, with email recorded in
-#                                       $FAKE_KC.email.
-#   claude auth status --json        -> logged-in + email from $FAKE_KC.email,
-#                                       UNLESS the stored credential is EXPIRED.
+# Test stub for the `claude` CLI. Models the subcommands swap uses, faithfully to
+# how real Claude Code behaves:
+#   claude auth login [--email <e>]  -> writes a fake token to the stub keychain
+#                                       slot ($FAKE_KC) keyed by the macOS user
+#                                       ($FAKE_KC.acct), AND records the active
+#                                       identity in $SWAP_CLAUDE_JSON's
+#                                       oauthAccount block (like real claude).
+#   claude auth status --json        -> loggedIn from token validity (keychain
+#                                       present + not EXPIRED); email taken from
+#                                       oauthAccount (the identity), as real
+#                                       claude does — NOT from the token.
 : "${FAKE_KC:?FAKE_KC must be set}"
 KC_ACCOUNT="${USER:-$(id -un)}"
 
@@ -19,15 +22,34 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
   done
   [ -z "$email" ] && email="bootstrap@example.com"   # user-entered email on the page
   printf '{"claudeAiOauth":{"accessToken":"fake-%s","refreshToken":"r","expiresAt":0}}' "$email" > "$FAKE_KC"
-  printf '%s' "$KC_ACCOUNT" > "$FAKE_KC.acct"          # claude keys by macOS user
+  printf '%s' "$KC_ACCOUNT" > "$FAKE_KC.acct"
   printf '%s' "$email" > "$FAKE_KC.email"
+  if [ -n "${SWAP_CLAUDE_JSON:-}" ]; then
+    CJ="$SWAP_CLAUDE_JSON" EM="$email" python3 -c "
+import json, os
+p = os.environ['CJ']
+try: d = json.load(open(p))
+except Exception: d = {}
+d.setdefault('oauthAccount', {})['emailAddress'] = os.environ['EM']
+d['oauthAccount'].setdefault('accountUuid', 'uuid-' + os.environ['EM'])
+json.dump(d, open(p, 'w'))
+"
+  fi
   echo "(stub) logged in as $email"
   exit 0
 fi
 
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
   slot="$(cat "$FAKE_KC" 2>/dev/null || true)"
-  email="$(cat "$FAKE_KC.email" 2>/dev/null || true)"
+  email=""
+  if [ -n "${SWAP_CLAUDE_JSON:-}" ]; then
+    email="$(CJ="$SWAP_CLAUDE_JSON" python3 -c "
+import json, os
+try: print(json.load(open(os.environ['CJ'])).get('oauthAccount', {}).get('emailAddress', ''))
+except Exception: print('')
+" 2>/dev/null)"
+  fi
+  [ -z "$email" ] && email="$(cat "$FAKE_KC.email" 2>/dev/null || true)"
   if [ -z "$slot" ] || printf '%s' "$slot" | grep -q EXPIRED; then
     printf '{"loggedIn":false}\n'
   else
