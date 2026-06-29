@@ -24,6 +24,9 @@ case "$sub" in
   add-generic-password)
     printf '%s' "$value" > "$store"
     printf '%s' "$account" > "$store.acct"
+    # Derive the email from the fake blob so `claude auth status` can echo it.
+    em=$(printf '%s' "$value" | sed -n 's/.*"accessToken":"fake-\([^"]*\)".*/\1/p')
+    [ -n "$em" ] && printf '%s' "$em" > "$store.email"
     exit 0;;
   find-generic-password)
     if [ -s "$store" ]; then cat "$store"; exit 0; else exit 44; fi;;

@@ -77,6 +77,7 @@ run - use work
 t_rc "use rc0" 0
 t_eq "use set active" "$(cat "$SWAP_VAULT/.active")" "work"
 t_eq "use restored slot == vault blob" "$(cat "$FAKE_KC")" "$(cat "$SWAP_VAULT/work.keychain")"
+t_eq "use keys keychain by macOS user (not email)" "$(cat "$FAKE_KC.acct")" "${USER:-$(id -un)}"
 run - add nocred --email nc@example.com >/dev/null
 run - use nocred
 t_rc "use without saved creds rc1" 1; t_has "use no-creds msg" "No saved credentials"

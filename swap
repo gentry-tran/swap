@@ -28,6 +28,10 @@ VAULT="${SWAP_VAULT:-${XDG_CONFIG_HOME:-$HOME/.config}/swap}"
 CONFIG="$VAULT/accounts.json"
 ACTIVE_FILE="$VAULT/.active"
 KEYCHAIN_SERVICE="Claude Code-credentials"
+# Claude Code stores its credential keyed by the macOS account name (your login
+# user), NOT the email. The Keychain item MUST be written with this exact
+# account attribute or `claude` won't find it and will demand a fresh login.
+KEYCHAIN_ACCOUNT="${USER:-$(id -un)}"
 
 mkdir -p "$VAULT"
 
@@ -141,11 +145,11 @@ cmd_save() {
   if [ -z "$email" ]; then
     echo "Account '$name' not found." >&2; exit 1
   fi
-  # Extract credentials from the Keychain.
+  # Extract credentials from the Keychain. Claude keys the item by the macOS
+  # account name; fall back to a service-only lookup just in case.
   local creds
-  creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$email" -w 2>/dev/null || echo "")
+  creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w 2>/dev/null || echo "")
   if [ -z "$creds" ]; then
-    # Some versions store without the account filter.
     creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null || echo "")
   fi
   if [ -n "$creds" ]; then
@@ -176,8 +180,9 @@ cmd_restore() {
   fi
   creds=$(cat "$kc")
   keychain_purge
-  # -U updates if present; -A allows access without a per-read prompt.
-  security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$email" -w "$creds"
+  # Write the item under the macOS account name claude reads (NOT the email),
+  # or claude won't find it and will force a fresh login. -U updates if present.
+  security add-generic-password -U -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w "$creds"
   printf "%s" "$name" > "$ACTIVE_FILE"
   echo "Switched to '$name' ($email). Restart 'claude' — it'll be signed in automatically (no /login)."
 }

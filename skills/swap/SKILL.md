@@ -22,12 +22,16 @@ Claude Code signs in with **OAuth**. The resulting credential is a JSON blob:
 On macOS this blob is stored in the **login Keychain**, not a file:
 
 - Service name: `Claude Code-credentials`
-- Account: the signed-in email
+- Account (`acct`): the **macOS login user name** (e.g. `whoami`), **not** the
+  email. This is a critical gotcha — if you restore the credential under an item
+  whose account is the email, `claude` looks it up by the OS user, doesn't find
+  it, and demands a fresh `/login` even though the blob is perfectly valid. swap
+  always writes the item with `-a "$USER"` for this reason.
 
-Inspect it directly:
+Inspect it directly (note the `acct` shown is your macOS user):
 
 ```bash
-security find-generic-password -s "Claude Code-credentials" -w
+security find-generic-password -s "Claude Code-credentials" -g
 ```
 
 **Token refresh:** when `accessToken` expires, Claude Code automatically uses

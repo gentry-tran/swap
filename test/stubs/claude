@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Test stub for the `claude` CLI. Models the two subcommands swap uses:
-#   claude auth login [--email <e>]  -> "sign in" by writing a fake credential
-#                                       into the stub keychain slot ($FAKE_KC).
-#                                       Email-less login simulates the user
-#                                       choosing an account on Claude's page.
-#   claude auth status --json        -> report logged-in + email, UNLESS the
-#                                       stored credential is the EXPIRED marker.
+# Test stub for the `claude` CLI. Models the subcommands swap uses:
+#   claude auth login [--email <e>]  -> "sign in": write a fake credential into
+#                                       the stub keychain slot ($FAKE_KC) keyed
+#                                       (like the real claude) by the macOS user
+#                                       in $FAKE_KC.acct, with email recorded in
+#                                       $FAKE_KC.email.
+#   claude auth status --json        -> logged-in + email from $FAKE_KC.email,
+#                                       UNLESS the stored credential is EXPIRED.
 : "${FAKE_KC:?FAKE_KC must be set}"
+KC_ACCOUNT="${USER:-$(id -un)}"
 
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
   email=""
@@ -17,18 +19,19 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
   done
   [ -z "$email" ] && email="bootstrap@example.com"   # user-entered email on the page
   printf '{"claudeAiOauth":{"accessToken":"fake-%s","refreshToken":"r","expiresAt":0}}' "$email" > "$FAKE_KC"
-  printf '%s' "$email" > "$FAKE_KC.acct"
+  printf '%s' "$KC_ACCOUNT" > "$FAKE_KC.acct"          # claude keys by macOS user
+  printf '%s' "$email" > "$FAKE_KC.email"
   echo "(stub) logged in as $email"
   exit 0
 fi
 
 if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
   slot="$(cat "$FAKE_KC" 2>/dev/null || true)"
-  acct="$(cat "$FAKE_KC.acct" 2>/dev/null || true)"
+  email="$(cat "$FAKE_KC.email" 2>/dev/null || true)"
   if [ -z "$slot" ] || printf '%s' "$slot" | grep -q EXPIRED; then
     printf '{"loggedIn":false}\n'
   else
-    printf '{"loggedIn":true,"email":"%s"}\n' "$acct"
+    printf '{"loggedIn":true,"email":"%s"}\n' "$email"
   fi
   exit 0
 fi
