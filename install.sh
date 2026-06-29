@@ -17,6 +17,18 @@ ln -s "$SRC" "$LINK"
 chmod +x "$SRC"
 echo "Linked $LINK -> $SRC"
 
+# Surface the bundled skill to Claude Code by symlinking it out of the repo
+# (the skill's canonical home is THIS repo — never a copy under ~/.claude/skills
+# or any skills-warehouse). Idempotent; only links when the skill dir exists.
+SKILL_SRC="$(cd "$(dirname "$0")" && pwd)/skills/swap"
+if [ -d "$SKILL_SRC" ]; then
+  SKILL_LINK="$HOME/.claude/skills/swap"
+  mkdir -p "$HOME/.claude/skills"
+  if [ -L "$SKILL_LINK" ] || [ -e "$SKILL_LINK" ]; then rm -rf "$SKILL_LINK"; fi
+  ln -s "$SKILL_SRC" "$SKILL_LINK"
+  echo "Linked $SKILL_LINK -> $SKILL_SRC"
+fi
+
 # One-time migration from the legacy vault path, if present and the new one is empty.
 NEW_VAULT="${SWAP_VAULT:-${XDG_CONFIG_HOME:-$HOME/.config}/swap}"
 OLD_VAULT="$HOME/.claude/.auth-vault"

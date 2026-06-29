@@ -61,6 +61,15 @@ past **still works** if its refresh token is valid. Refreshing rotates the
 refresh token → the same credential can't stay live on two machines forever; the
 last to refresh wins.
 
+**Rotation also invalidates stale vault snapshots.** Because the refresh token
+rotates every time an account is used, a backup taken once goes stale the moment
+you keep using that account: the vault still holds the old refresh token, but
+Claude has already rotated to a new one. Restore that stale snapshot later and
+the dead refresh token forces a browser login even though "nothing changed."
+`swap` defends against this by **re-snapshotting the outgoing account's live
+token right before it switches away** (Mechanics → *snapshot-on-switch*), so each
+account's backup always reflects its latest rotation.
+
 ### The single-slot problem
 
 There is exactly one `Claude Code-credentials` item and one `oauthAccount`.
@@ -95,12 +104,34 @@ Bare `swap`:
 - **save / login** read the token via `security find-generic-password -a "$USER"`
   (with a service-only fallback) → `<vault>/<name>.keychain`, and copy the
   `oauthAccount` block out of `~/.claude.json` → `<vault>/<name>.oauth.json`.
+- **login also verifies the signed-in identity.** After the browser OAuth, `swap`
+  reads `claude auth status` and **refuses to save** if the account you actually
+  signed into doesn't match the account name you asked for (e.g. the browser was
+  already logged into a different subscription). This prevents writing account
+  A's token+identity under account B's name.
 - **use / restore** purge every `Claude Code-credentials` item, then re-add the
   saved token with `security add-generic-password -U -a "$USER"` (the macOS user,
   or `claude` won't find it), **and** write the saved `oauthAccount` back into
   `~/.claude.json`. Purging first prevents a stale item shadowing the new one.
+- **snapshot-on-switch:** before restoring the target, `use`/`restore`/`swap`
+  first re-save the **outgoing** account's *current live* token back to its vault
+  file — but only when the live `oauthAccount` email matches that account (so it
+  never writes the wrong token into the wrong file). This captures the refresh
+  token Claude rotated to while you were using the account, so switching away and
+  back never restores a dead token.
 - **validity check** (interactive `swap` only): after restoring, run
-  `claude auth status --json`. Logged-in → done, no browser. Otherwise re-auth.
+  `claude auth status --json` and confirm the signed-in email **matches the
+  account you picked**. Match → done, no browser. Empty but a refresh token is
+  cached → Claude re-mints on launch, no browser. Otherwise (expired with no
+  refresh token, or the restored session belongs to a different account) → real
+  browser re-auth.
+- **"saved" means token *and* identity.** An account counts as restorable only
+  when both `<name>.keychain` and `<name>.oauth.json` exist. A lone keychain
+  (e.g. a token copied in by hand, no real login) is shown as **needs login** and
+  triggers a browser sign-in rather than a half-broken restore.
+- **browser fallback:** if an account's saved browser isn't actually installed,
+  the chooser's "Enter = keep current" falls back to the **system default**
+  browser, never to a dead app that `open(1)` would silently fail to launch.
 - **browser selection** is only consulted when a sign-in is actually needed and
   the account has no usable saved browser. The candidate list is **not
   hardcoded**: it runs `lsregister -dump` and keeps top-level apps whose
@@ -151,3 +182,16 @@ the **default**, unsuffixed item and leaves suffixed profiles alone.
 - **Wrong account keeps returning:** a stale Keychain item is shadowing the swap.
   `swap use` purges them; by hand, delete every `Claude Code-credentials` item
   first.
+- **Switching back to an account you were just using forces a fresh login (its
+  saved token "died"):** the vault snapshot was older than the live token. Each
+  use rotates the refresh token, so a once-saved backup goes stale. Current `swap`
+  fixes this with snapshot-on-switch (it re-saves the outgoing account before
+  leaving it). If you're on an older copy, `swap save <name>` while that account
+  is live re-captures the current token. Verify with
+  `diff <(security find-generic-password -s "Claude Code-credentials" -w) <vault>/<name>.keychain`.
+- **`swap` says "✓ still valid (<other-account>)" after picking a different
+  account:** the picked account had no real saved auth (missing `oauth.json`, or a
+  keychain that doesn't belong to it), so the restore left `claude` on the
+  previous account and the status check reported *that* email. Current `swap`
+  detects the mismatch and launches a real login; if you see this on an older
+  copy, run `swap login <name>` to capture genuine credentials for it.

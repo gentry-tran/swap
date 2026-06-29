@@ -140,6 +140,18 @@ cmd_login() {
   fi
   echo "Logging in as $email..."
   run_claude_login "$email" "$browser"
+  # Verify the browser session is ACTUALLY this account before saving. If you
+  # signed into a different account (e.g. the browser was already logged in as
+  # someone else), saving would write the wrong token+identity under this name.
+  local got; got="$(current_auth_email)"
+  if [ -z "$got" ]; then
+    echo "Sign-in didn't complete — nothing saved for '$name'." >&2; exit 1
+  fi
+  if [ "$(printf '%s' "$got" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$email" | tr 'A-Z' 'a-z')" ]; then
+    echo "Refusing to save: you signed in as '$got', but '$name' expects '$email'." >&2
+    echo "Sign out of '$got' in the browser, then run: swap login $name" >&2
+    exit 1
+  fi
   cmd_save "$name"
   printf "%s" "$name" > "$ACTIVE_FILE"
   echo "Logged in and saved as '$name' ($email)"
@@ -209,6 +221,46 @@ keychain_purge() {
   while security delete-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1; do :; done
 }
 
+# Email recorded in the live ~/.claude.json oauthAccount block (NOT from the
+# network). Identifies which account the live Keychain token currently belongs to.
+live_oauth_email() {
+  [ -f "$CLAUDE_JSON" ] || return 0
+  CJ="$CLAUDE_JSON" python3 -c "
+import json, os
+try: d = json.load(open(os.environ['CJ']))
+except Exception: raise SystemExit
+print((d.get('oauthAccount') or {}).get('emailAddress', ''))
+" 2>/dev/null
+}
+
+# Re-snapshot the CURRENTLY-active account before we switch away from it.
+# Claude rotates the refresh token on every use (last-refresh-wins), so the
+# vault copy goes stale the moment that account is used. Without this, switching
+# away then back restores a rotated-out (dead) token → forced browser /login.
+# Guard: only overwrite the outgoing account's files when the live identity block
+# actually matches that account, so we never write account A's token into B's file.
+sync_active_snapshot() {
+  local target="$1"
+  local active=""
+  [ -f "$ACTIVE_FILE" ] && active=$(cat "$ACTIVE_FILE")
+  [ -z "$active" ] && return 0
+  [ "$active" = "$target" ] && return 0           # not switching away from anything
+  local want live
+  want=$(get_account_field "$active" "email")
+  [ -z "$want" ] && return 0
+  live=$(live_oauth_email)
+  # Only re-save if the live token demonstrably belongs to the outgoing account.
+  if [ -n "$live" ] && [ "$(printf '%s' "$live" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$want" | tr 'A-Z' 'a-z')" ]; then
+    local creds
+    creds=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$KEYCHAIN_ACCOUNT" -w 2>/dev/null || security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null || true)
+    if [ -n "$creds" ]; then
+      printf '%s' "$creds" > "$VAULT/${active}.keychain"
+      chmod 600 "$VAULT/${active}.keychain"
+      save_oauth "$active"
+    fi
+  fi
+}
+
 cmd_restore() {
   local name="$1"
   local email creds kc
@@ -216,6 +268,7 @@ cmd_restore() {
   if [ -z "$email" ]; then
     echo "Account '$name' not found. Use: swap add $name --email <email>" >&2; exit 1
   fi
+  sync_active_snapshot "$name"   # capture outgoing account's rotated token BEFORE switching
   kc="$VAULT/${name}.keychain"
   if [ ! -s "$kc" ]; then
     echo "No saved credentials for '$name'. Run: swap login $name" >&2; exit 1
@@ -335,13 +388,23 @@ choose_browser() {
   local -a browsers=()
   while IFS= read -r b; do browsers+=("$b"); done < <(detect_browsers)
   if [ ${#browsers[@]} -eq 0 ]; then printf '%s' "$current"; return; fi
+  # If the current/saved browser isn't actually installed, Enter must fall back
+  # to the system default — NEVER to a dead app that open(1) silently can't launch.
+  local fallback="$current"
+  if [ -n "$current" ] && [ "$current" != "default" ] && ! browser_installed "$current"; then
+    fallback="default"
+  fi
   { echo ""
     echo "Which browser for sign-in? (detected on this Mac)"
     local j; for j in "${!browsers[@]}"; do printf "  %d) %s\n" "$((j+1))" "${browsers[$j]}"; done
-    echo "  Enter = keep current (${current:-default})"
+    if [ "$fallback" = "default" ]; then
+      echo "  Enter = use the system default browser"
+    else
+      echo "  Enter = keep current ($fallback)"
+    fi
   } >&2
   local bpick; read -r -p "Browser #: " bpick
-  if [ -z "$bpick" ]; then printf '%s' "$current"
+  if [ -z "$bpick" ]; then printf '%s' "$fallback"
   elif [[ "$bpick" =~ ^[0-9]+$ ]] && [ "$bpick" -ge 1 ] && [ "$bpick" -le ${#browsers[@]} ]; then
     printf '%s' "${browsers[$((bpick-1))]}"
   else printf '%s' "$bpick"; fi
@@ -404,7 +467,9 @@ cmd_swap() {
     local n="${names[$i]}"
     local email has marker ident
     email=$(get_account_field "$n" "email")
-    [ -s "$VAULT/${n}.keychain" ] && has="saved" || has="needs login"
+    # "saved" requires BOTH the token AND the identity block. A lone keychain
+    # (e.g. a token copied in without a real login) is NOT a usable account.
+    { [ -s "$VAULT/${n}.keychain" ] && [ -s "$VAULT/${n}.oauth.json" ]; } && has="saved" || has="needs login"
     [ "$n" = "$active" ] && marker=" (active)" || marker=""
     # Show the email once when the account name IS the email.
     [ "$n" = "$email" ] && ident="$email" || ident="$n ($email)"
@@ -423,17 +488,28 @@ cmd_swap() {
   fi
 
   echo ""
-  if [ -s "$VAULT/${name}.keychain" ]; then
-    # Cached creds exist: restore them, then check whether they're still good.
-    # A browser sign-in only happens if the session is actually expired.
+  if [ -s "$VAULT/${name}.keychain" ] && [ -s "$VAULT/${name}.oauth.json" ]; then
+    # A COMPLETE saved account (token + identity) exists: restore it, then VERIFY
+    # the restored session actually belongs to THIS account before trusting it.
+    # Without the match check, a missing/mismatched identity leaves claude on the
+    # PREVIOUS account and current_auth_email reports that old email as "valid".
     cmd_restore "$name"
-    local who; who="$(current_auth_email)"
-    if [ -n "$who" ]; then
+    local want who
+    want=$(get_account_field "$name" "email")
+    who="$(current_auth_email)"
+    if [ -n "$who" ] && [ "$(printf '%s' "$who" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$want" | tr 'A-Z' 'a-z')" ]; then
       echo "✓ Auth still valid ($who) — no browser sign-in needed. Restart 'claude'."
-    elif blob_has_refresh "$VAULT/${name}.keychain"; then
+    elif [ -z "$who" ] && blob_has_refresh "$VAULT/${name}.keychain"; then
+      # Access token expired but a refresh token is cached: claude re-mints on launch.
       echo "✓ Cached credentials present — Claude will refresh the token automatically on launch. No sign-in needed."
     else
-      echo "Cached auth for '$name' is expired — re-authenticating..."
+      # who empty (expired + no refresh) OR who != this account (cached creds
+      # don't actually belong to '$name'). Either way: do a real browser sign-in.
+      if [ -n "$who" ] && [ "$who" != "$want" ]; then
+        echo "Restored session is '$who', not '$want' — no valid saved auth for '$name'. Re-authenticating..."
+      else
+        echo "Cached auth for '$name' is expired — re-authenticating..."
+      fi
       local browser; browser="$(ensure_browser "$name")"
       echo "Opening ${browser:-the default browser} to sign in..."
       cmd_login "$name"

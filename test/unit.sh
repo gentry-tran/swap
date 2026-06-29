@@ -138,7 +138,10 @@ t_rc "swap invalid pick rc1" 1; t_has "swap invalid msg" "No such account"
 # --- expired session WITH a saved installed browser: re-auth, NO prompt ---
 fresh
 run - add exp --email exp@example.com --browser Safari >/dev/null
+# A COMPLETE saved account (token + identity) whose token is expired and carries
+# no refresh token. Both files must exist or it's treated as needs-login, not expired.
 printf '%s' '{"claudeAiOauth":{"accessToken":"EXPIRED-TOKEN","expiresAt":0}}' > "$SWAP_VAULT/exp.keychain"
+printf '%s' '{"emailAddress":"exp@example.com","accountUuid":"uuid-exp"}' > "$SWAP_VAULT/exp.oauth.json"
 run 'exp\n' swap
 t_rc "swap expired rc0" 0
 t_has "swap expired announces re-auth" "is expired"
@@ -190,6 +193,63 @@ t_eq "use restored identity (oauthAccount)" "$(cj_email)" "w@example.com"
 # remove cleans the identity file too
 run - remove work
 t_nofile "remove deleted identity file" "$SWAP_VAULT/work.oauth.json"
+
+echo "## snapshot-on-switch: outgoing account's rotated token is re-saved before leaving"
+# Claude rotates the refresh token on use; without re-snapshotting the outgoing
+# account, switching away then back restores a dead token. Verify the switch
+# captures the live (rotated) token into the OUTGOING account's vault file.
+fresh
+run - add work     --email w@example.com >/dev/null
+run - add personal --email p@example.com >/dev/null
+run - login work     >/dev/null            # active=work, slot+vault hold work's first token
+run - login personal >/dev/null            # active=personal
+run - use work       >/dev/null            # back to work; active=work, live slot=work token
+# Simulate Claude rotating work's token while work is live (new refresh token):
+printf '{"claudeAiOauth":{"accessToken":"fake-w@example.com","refreshToken":"ROTATED","expiresAt":0}}' > "$FAKE_KC"
+run - use personal                          # switch AWAY from work -> must re-save work first
+t_rc "snapshot-on-switch rc0" 0
+t_filehas "outgoing rotated token captured" "$SWAP_VAULT/work.keychain" "ROTATED"
+t_eq "switched to personal" "$(cat "$SWAP_VAULT/.active")" "personal"
+# Guard: don't write the wrong account's token into another's file. After the
+# switch above the live slot belongs to personal; saving 'work' must NOT clobber it.
+t_hasnot "personal vault not corrupted by work's token" "$(cat "$SWAP_VAULT/personal.keychain")" "ROTATED"
+
+echo "## 'saved' requires BOTH token and identity (lone keychain = needs login)"
+fresh
+run - add half --email half@example.com --browser Safari >/dev/null
+printf '{"claudeAiOauth":{"accessToken":"fake-half@example.com","refreshToken":"r","expiresAt":0}}' > "$SWAP_VAULT/half.keychain"
+# keychain present but NO oauth.json -> not a complete account -> must run a login,
+# not a silent (broken) restore.
+run 'half\n' swap
+t_rc "lone-keychain rc0" 0
+t_has "lone keychain triggers login not restore" "to sign in"
+t_file "lone-keychain login completed identity" "$SWAP_VAULT/half.oauth.json"
+
+echo "## login refuses to save when the signed-in account != requested account"
+fresh
+run - add colum --email colum@example.com --browser Safari >/dev/null
+# Browser is already signed into a DIFFERENT account (gmail), so the captured
+# session is gmail even though we asked for colum. swap must refuse to save.
+export STUB_FORCE_LOGIN_EMAIL="gmail@example.com"
+run - login colum
+unset STUB_FORCE_LOGIN_EMAIL
+t_rc "mismatched login rc1" 1
+t_has "mismatch refusal message" "Refusing to save"
+t_nofile "mismatch did NOT write wrong keychain" "$SWAP_VAULT/colum.keychain"
+
+echo "## switch verifies restored email matches the picked account (no false 'still valid')"
+fresh
+run - add a1 --email a1@example.com --browser Safari >/dev/null
+run - add a2 --email a2@example.com --browser Safari >/dev/null
+run - login a1 >/dev/null
+run - login a2 >/dev/null            # active=a2, identity=a2
+# Forge an a1 entry whose keychain+identity actually belong to a2 (wrong creds).
+cp "$SWAP_VAULT/a2.keychain"   "$SWAP_VAULT/a1.keychain"
+printf '%s' '{"emailAddress":"a2@example.com","accountUuid":"uuid-a2"}' > "$SWAP_VAULT/a1.oauth.json"
+run 'a1\n' swap
+# Restored session resolves to a2, not a1 -> must NOT claim "still valid"; must re-auth.
+t_hasnot "no false still-valid on mismatch" "Auth still valid"
+t_has "mismatch forces real login" "to sign in"
 
 echo "## browser detection (LaunchServices-derived, filtered) via 'swap browsers'"
 run - browsers

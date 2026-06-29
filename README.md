@@ -60,6 +60,16 @@ if its `refreshToken` is valid — `claude` refreshes on launch. Refreshing rota
 the refresh token, so the same credential can't be live on two machines forever;
 last machine to refresh wins.
 
+**Rotation vs. stale backups:** because the refresh token rotates on every use, a
+backup taken once goes stale as you keep using that account — restoring it later
+would hand back a dead token and force a login. swap avoids this by re-saving the
+**outgoing** account's live token right before it switches away (only when the
+live identity matches that account), so each backup tracks the latest rotation.
+Two more guards: `swap login` **refuses to save** if the browser signed you into a
+different account than the one you asked for, and a switch only reports "still
+valid" when the restored session's email actually matches the account you picked
+(otherwise it does a real browser login).
+
 ## Install
 
 ```bash

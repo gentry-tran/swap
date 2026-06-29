@@ -21,6 +21,9 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "login" ]; then
     shift
   done
   [ -z "$email" ] && email="bootstrap@example.com"   # user-entered email on the page
+  # Simulate a browser already signed into a DIFFERENT account: the session that
+  # actually gets captured is STUB_FORCE_LOGIN_EMAIL, regardless of --email.
+  [ -n "${STUB_FORCE_LOGIN_EMAIL:-}" ] && email="$STUB_FORCE_LOGIN_EMAIL"
   printf '{"claudeAiOauth":{"accessToken":"fake-%s","refreshToken":"r","expiresAt":0}}' "$email" > "$FAKE_KC"
   printf '%s' "$KC_ACCOUNT" > "$FAKE_KC.acct"
   printf '%s' "$email" > "$FAKE_KC.email"
